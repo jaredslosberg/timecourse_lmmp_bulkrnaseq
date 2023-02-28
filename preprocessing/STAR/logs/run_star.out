@@ -1,0 +1,119 @@
+	STAR --runThreadN 4 --genomeDir /data/users/jared/STAR_output --outFileNamePrefix=/mnt/morbo/Data/Users/jslosberg/aged_bulkrna/preprocessing/STAR/17mo-F-2 --readFilesIn 17mo-F-2_R1.fq 17mo-F-2_R2.fq
+	STAR version: 2.7.10b_alpha_220111   compiled: 2023-02-08T14:00:21-05:00 :/usr/bin/STAR/source
+Feb 15 15:48:33 ..... started STAR run
+Feb 15 15:48:33 ..... loading genome
+Feb 15 15:49:03 ..... started mapping
+Feb 15 16:04:56 ..... finished mapping
+Feb 15 16:05:03 ..... finished successfully
+	STAR --runThreadN 4 --genomeDir /data/users/jared/STAR_output --outFileNamePrefix=/mnt/morbo/Data/Users/jslosberg/aged_bulkrna/preprocessing/STAR/17mo-F-1 --readFilesIn 17mo-F-1_R1.fq 17mo-F-1_R2.fq
+	STAR version: 2.7.10b_alpha_220111   compiled: 2023-02-08T14:00:21-05:00 :/usr/bin/STAR/source
+Feb 15 15:48:33 ..... started STAR run
+Feb 15 15:48:33 ..... loading genome
+Feb 15 15:49:02 ..... started mapping
+Feb 15 16:04:59 ..... finished mapping
+Feb 15 16:05:05 ..... finished successfully
+	STAR --runThreadN 4 --genomeDir /data/users/jared/STAR_output --outFileNamePrefix=/mnt/morbo/Data/Users/jslosberg/aged_bulkrna/preprocessing/STAR/17mo-M-1 --readFilesIn 17mo-M-1_R1.fq 17mo-M-1_R2.fq
+	STAR version: 2.7.10b_alpha_220111   compiled: 2023-02-08T14:00:21-05:00 :/usr/bin/STAR/source
+Feb 15 15:48:33 ..... started STAR run
+Feb 15 15:48:33 ..... loading genome
+Feb 15 15:49:02 ..... started mapping
+Feb 15 16:05:55 ..... finished mapping
+Feb 15 16:06:03 ..... finished successfully
+	STAR --runThreadN 4 --genomeDir /data/users/jared/STAR_output --outFileNamePrefix=/mnt/morbo/Data/Users/jslosberg/aged_bulkrna/preprocessing/STAR/17mo-M-2 --readFilesIn 17mo-M-2_R1.fq 17mo-M-2_R2.fq
+	STAR version: 2.7.10b_alpha_220111   compiled: 2023-02-08T14:00:21-05:00 :/usr/bin/STAR/source
+Feb 15 15:48:33 ..... started STAR run
+Feb 15 15:48:33 ..... loading genome
+Feb 15 15:49:03 ..... started mapping
+Feb 15 16:09:41 ..... finished mapping
+Feb 15 16:09:49 ..... finished successfully
+	STAR --runThreadN 4 --genomeDir /data/users/jared/STAR_output --outFileNamePrefix=/mnt/morbo/Data/Users/jslosberg/aged_bulkrna/preprocessing/STAR/17mo-M-3 --readFilesIn 17mo-M-3_R1.fq 17mo-M-3_R2.fq
+	STAR version: 2.7.10b_alpha_220111   compiled: 2023-02-08T14:00:21-05:00 :/usr/bin/STAR/source
+Feb 15 16:05:03 ..... started STAR run
+Feb 15 16:05:03 ..... loading genome
+Feb 15 16:05:33 ..... started mapping
+Feb 15 16:18:20 ..... finished mapping
+Feb 15 16:18:26 ..... finished successfully
+	STAR --runThreadN 4 --genomeDir /data/users/jared/STAR_output --outFileNamePrefix=/mnt/morbo/Data/Users/jslosberg/aged_bulkrna/preprocessing/STAR/6mo-F-1 --readFilesIn 6mo-F-1_R1.fq 6mo-F-1_R2.fq
+	STAR version: 2.7.10b_alpha_220111   compiled: 2023-02-08T14:00:21-05:00 :/usr/bin/STAR/source
+Feb 15 16:05:05 ..... started STAR run
+Feb 15 16:05:05 ..... loading genome
+Feb 15 16:05:34 ..... started mapping
+Feb 15 16:21:20 ..... finished mapping
+Feb 15 16:21:25 ..... finished successfully
+	STAR --runThreadN 4 --genomeDir /data/users/jared/STAR_output --outFileNamePrefix=/mnt/morbo/Data/Users/jslosberg/aged_bulkrna/preprocessing/STAR/6mo-F-2 --readFilesIn 6mo-F-2_R1.fq 6mo-F-2_R2.fq
+	STAR version: 2.7.10b_alpha_220111   compiled: 2023-02-08T14:00:21-05:00 :/usr/bin/STAR/source
+Feb 15 16:06:03 ..... started STAR run
+Feb 15 16:06:03 ..... loading genome
+Feb 15 16:06:39 ..... started mapping
+Feb 15 16:26:16 ..... finished mapping
+Feb 15 16:26:25 ..... finished successfully
+	STAR --runThreadN 4 --genomeDir /data/users/jared/STAR_output --outFileNamePrefix=/mnt/morbo/Data/Users/jslosberg/aged_bulkrna/preprocessing/STAR/6mo-F-3 --readFilesIn 6mo-F-3_R1.fq 6mo-F-3_R2.fq
+	STAR version: 2.7.10b_alpha_220111   compiled: 2023-02-08T14:00:21-05:00 :/usr/bin/STAR/source
+Feb 15 16:09:49 ..... started STAR run
+Feb 15 16:09:49 ..... loading genome
+Feb 15 16:10:18 ..... started mapping
+Feb 15 16:28:32 ..... finished mapping
+Feb 15 16:28:39 ..... finished successfully
+	STAR --runThreadN 4 --genomeDir /data/users/jared/STAR_output --outFileNamePrefix=/mnt/morbo/Data/Users/jslosberg/aged_bulkrna/preprocessing/STAR/6mo-M-1 --readFilesIn 6mo-M-1_R1.fq 6mo-M-1_R2.fq
+	STAR version: 2.7.10b_alpha_220111   compiled: 2023-02-08T14:00:21-05:00 :/usr/bin/STAR/source
+Feb 15 16:18:26 ..... started STAR run
+Feb 15 16:18:26 ..... loading genome
+Feb 15 16:18:56 ..... started mapping
+Feb 15 16:31:43 ..... finished mapping
+Feb 15 16:31:51 ..... finished successfully
+	STAR --runThreadN 4 --genomeDir /data/users/jared/STAR_output --outFileNamePrefix=/mnt/morbo/Data/Users/jslosberg/aged_bulkrna/preprocessing/STAR/6mo-M-3 --readFilesIn 6mo-M-3_R1.fq 6mo-M-3_R2.fq
+	STAR version: 2.7.10b_alpha_220111   compiled: 2023-02-08T14:00:21-05:00 :/usr/bin/STAR/source
+Feb 15 16:26:25 ..... started STAR run
+Feb 15 16:26:25 ..... loading genome
+Feb 15 16:26:55 ..... started mapping
+Feb 15 16:39:17 ..... finished mapping
+Feb 15 16:39:26 ..... finished successfully
+	STAR --runThreadN 4 --genomeDir /data/users/jared/STAR_output --outFileNamePrefix=/mnt/morbo/Data/Users/jslosberg/aged_bulkrna/preprocessing/STAR/6mo-M-2 --readFilesIn 6mo-M-2_R1.fq 6mo-M-2_R2.fq
+	STAR version: 2.7.10b_alpha_220111   compiled: 2023-02-08T14:00:21-05:00 :/usr/bin/STAR/source
+Feb 15 16:21:25 ..... started STAR run
+Feb 15 16:21:25 ..... loading genome
+Feb 15 16:21:58 ..... started mapping
+Feb 15 16:39:45 ..... finished mapping
+Feb 15 16:39:53 ..... finished successfully
+	STAR --runThreadN 4 --genomeDir /data/users/jared/STAR_output --outFileNamePrefix=/mnt/morbo/Data/Users/jslosberg/aged_bulkrna/preprocessing/STAR/P30-F-1 --readFilesIn P30-F-1_R1.fq P30-F-1_R2.fq
+	STAR version: 2.7.10b_alpha_220111   compiled: 2023-02-08T14:00:21-05:00 :/usr/bin/STAR/source
+Feb 15 16:28:39 ..... started STAR run
+Feb 15 16:28:39 ..... loading genome
+Feb 15 16:29:15 ..... started mapping
+Feb 15 16:47:05 ..... finished mapping
+Feb 15 16:47:10 ..... finished successfully
+	STAR --runThreadN 4 --genomeDir /data/users/jared/STAR_output --outFileNamePrefix=/mnt/morbo/Data/Users/jslosberg/aged_bulkrna/preprocessing/STAR/P30-F-2 --readFilesIn P30-F-2_R1.fq P30-F-2_R2.fq
+	STAR version: 2.7.10b_alpha_220111   compiled: 2023-02-08T14:00:21-05:00 :/usr/bin/STAR/source
+Feb 15 16:31:51 ..... started STAR run
+Feb 15 16:31:51 ..... loading genome
+Feb 15 16:32:22 ..... started mapping
+Feb 15 16:50:39 ..... finished mapping
+Feb 15 16:50:46 ..... finished successfully
+	STAR --runThreadN 4 --genomeDir /data/users/jared/STAR_output --outFileNamePrefix=/mnt/morbo/Data/Users/jslosberg/aged_bulkrna/preprocessing/STAR/P30-F-3 --readFilesIn P30-F-3_R1.fq P30-F-3_R2.fq
+	STAR version: 2.7.10b_alpha_220111   compiled: 2023-02-08T14:00:21-05:00 :/usr/bin/STAR/source
+Feb 15 16:39:26 ..... started STAR run
+Feb 15 16:39:26 ..... loading genome
+Feb 15 16:40:00 ..... started mapping
+Feb 15 16:54:24 ..... finished mapping
+Feb 15 16:54:33 ..... finished successfully
+	STAR --runThreadN 4 --genomeDir /data/users/jared/STAR_output --outFileNamePrefix=/mnt/morbo/Data/Users/jslosberg/aged_bulkrna/preprocessing/STAR/P30-M-1 --readFilesIn P30-M-1_R1.fq P30-M-1_R2.fq
+	STAR version: 2.7.10b_alpha_220111   compiled: 2023-02-08T14:00:21-05:00 :/usr/bin/STAR/source
+Feb 15 16:39:53 ..... started STAR run
+Feb 15 16:39:53 ..... loading genome
+Feb 15 16:40:29 ..... started mapping
+Feb 15 16:57:42 ..... finished mapping
+Feb 15 16:57:48 ..... finished successfully
+	STAR --runThreadN 4 --genomeDir /data/users/jared/STAR_output --outFileNamePrefix=/mnt/morbo/Data/Users/jslosberg/aged_bulkrna/preprocessing/STAR/P30-M-3 --readFilesIn P30-M-3_R1.fq P30-M-3_R2.fq
+	STAR version: 2.7.10b_alpha_220111   compiled: 2023-02-08T14:00:21-05:00 :/usr/bin/STAR/source
+Feb 15 16:50:46 ..... started STAR run
+Feb 15 16:50:46 ..... loading genome
+Feb 15 16:51:22 ..... started mapping
+Feb 15 17:03:42 ..... finished mapping
+Feb 15 17:03:48 ..... finished successfully
+	STAR --runThreadN 4 --genomeDir /data/users/jared/STAR_output --outFileNamePrefix=/mnt/morbo/Data/Users/jslosberg/aged_bulkrna/preprocessing/STAR/P30-M-2 --readFilesIn P30-M-2_R1.fq P30-M-2_R2.fq
+	STAR version: 2.7.10b_alpha_220111   compiled: 2023-02-08T14:00:21-05:00 :/usr/bin/STAR/source
+Feb 15 16:47:11 ..... started STAR run
+Feb 15 16:47:11 ..... loading genome
+Feb 15 16:47:48 ..... started mapping
+Feb 15 17:04:32 ..... finished mapping
+Feb 15 17:04:39 ..... finished successfully

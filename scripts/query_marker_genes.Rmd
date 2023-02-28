@@ -1,0 +1,84 @@
+---
+
+title: "query_genes"
+author: "Jared Slosberg"
+date: "2/10/2023"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{r, include= F}
+library(tidyverse)
+library(glue)
+library(DESeq2)
+library(here)
+library(tximport)
+library(RColorBrewer)
+library(vsn)
+library(ComplexHeatmap)
+library(biomaRt)
+```
+
+```{r}
+dds <- readRDS(here("data/bulkrna_dds_collapsed_before.rds"))
+rownames(dds) <- rownames(dds) %>% str_split_fixed(., "\\.", 2) %>% .[,1]
+metadata_path <- here("metadata_merged.csv")
+exp_metadata <- read.csv(metadata_path, header = T)
+```
+
+```{r}
+ct_markers <- read.csv("/data/users/jared/ENS/6mo_LMMP/results/cluster_markers.csv", row.names = 1)
+
+cts <- ct_markers %>% dplyr::pull(cell_type) %>% unique
+```
+
+```{r}
+marker_by_ct <- map(cts, function(ct){
+  
+  #for each celltype pull top markers
+  ct_markers %>% dplyr::filter(cell_type == ct) %>% slice_max(order_by = marker_score, n = 5) 
+  
+}) %>% setNames(cts)
+
+gene_df <- ct_markers[,c("gene_id","gene_short_name")] %>% unique
+all_genes <- marker_by_ct %>% bind_rows() %>% pull(gene_id) 
+ntd <- normTransform(dds[all_genes,]) %>% assay 
+
+ntd_long <- ntd %>% as.data.frame() %>% tibble::rownames_to_column(var = "gene_id") %>% pivot_longer(!gene_id, names_to = "sample_name", values_to = "logcounts") %>% left_join(., exp_metadata)
+
+ntd_summary <- ntd_long %>% group_by(gene_id, age, sex) %>% summarise(mn = mean(logcounts), std = sd(logcounts) ) %>% left_join(., gene_df)
+```
+
+```{r}
+
+pls <- map(cts, function(ct){
+  gns <- marker_by_ct[[ct]] %>% pull(gene_short_name)
+  counts <- ntd_summary %>% filter(gene_short_name %in% gns) %>% mutate(age = factor(age, levels = c("P30","6mo","17mo")))
+  
+  ggplot(counts, aes(x = age, y = mn, color = sex)) + geom_point() + facet_grid(rows = vars(gene_short_name) ) + ylab(glue::glue("logcounts - ", ct, " genes")) + geom_errorbar(aes(ymin = mn-std, ymax = mn+std), width = 0.05) 
+
+})
+
+pl_final <- do.call(ggpubr::ggarrange, list(plotlist =pls, ncol = 2))
+
+pdf(here("plots/diff_exp/clustermarker_expression.pdf"), width = 8)
+pl_final
+dev.off()
+```
+```{r}
+marker_df <- marker_by_ct %>% bind_rows %>% mutate(ensemblgene_id = gene_id)
+#17month vs P30
+res <- read.csv(here("results/diff_exp_collapsed_before/age_17mo_vs_P30.csv"))
+res_filtered <- res %>% filter(ensemblgene_id %in% all_genes) %>% mutate(dummy = 1) %>% left_join(., marker_df)
+
+ggplot(res_filtered) + geom_tile(aes(x=ensemblgene_id, y = dummy, fill = log2FoldChange))
+
+map(cts, function(ct){
+  dat <- res_filtered %>% filter(cell_type == ct)
+  ggplot(dat) + geom_tile(aes(x=external_gene_name, y = dummy, fill = log2FoldChange))
+
+})
+```
+

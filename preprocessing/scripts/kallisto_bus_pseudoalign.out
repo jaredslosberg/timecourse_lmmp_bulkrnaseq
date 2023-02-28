@@ -1,0 +1,325 @@
+Tue 14 Feb 2023 03:45:40 PM EST
+kallisto, version 0.48.0
+
+[quant] fragment length distribution will be estimated from the data
+[index] k-mer length: 31
+[index] number of targets: 142,375
+[index] number of k-mers: 120,679,684
+[index] number of equivalence classes: 511,876
+Warning: 142375 transcripts were defined in GTF file, but not in the index
+[quant] running in paired-end mode
+[quant] will process pair 1: 17mo-F-2_R1.fq.gz
+                             17mo-F-2_R2.fq.gz
+[quant] finding pseudoalignments for the reads ... done
+[quant] processed 42,439,587 reads, 39,963,135 reads pseudoaligned
+[quant] estimated average fragment length: 179.801
+[   em] quantifying the abundances ... done
+[   em] the Expectation-Maximization algorithm ran for 1,309 rounds
+[  bam] writing pseudoalignments to BAM format .. done
+[  bam] sorting BAM files .. done
+[  bam] indexing BAM file .. done
+
+
+[quant] fragment length distribution will be estimated from the data
+[index] k-mer length: 31
+[index] number of targets: 142,375
+[index] number of k-mers: 120,679,684
+[index] number of equivalence classes: 511,876
+Warning: 142375 transcripts were defined in GTF file, but not in the index
+[quant] running in paired-end mode
+[quant] will process pair 1: 17mo-M-1_R1.fq.gz
+                             17mo-M-1_R2.fq.gz
+[quant] finding pseudoalignments for the reads ... done
+[quant] processed 46,756,241 reads, 44,110,823 reads pseudoaligned
+[quant] estimated average fragment length: 160.282
+[   em] quantifying the abundances ... done
+[   em] the Expectation-Maximization algorithm ran for 1,301 rounds
+[  bam] writing pseudoalignments to BAM format .. done
+[  bam] sorting BAM files .. done
+[  bam] indexing BAM file .. done
+
+
+[quant] fragment length distribution will be estimated from the data
+[index] k-mer length: 31
+[index] number of targets: 142,375
+[index] number of k-mers: 120,679,684
+[index] number of equivalence classes: 511,876
+Warning: 142375 transcripts were defined in GTF file, but not in the index
+[quant] running in paired-end mode
+[quant] will process pair 1: 17mo-F-1_R1.fq.gz
+                             17mo-F-1_R2.fq.gz
+[quant] finding pseudoalignments for the reads ... done
+[quant] processed 44,799,004 reads, 42,311,075 reads pseudoaligned
+[quant] estimated average fragment length: 173.168
+[   em] quantifying the abundances ... done
+[   em] the Expectation-Maximization algorithm ran for 1,281 rounds
+[  bam] writing pseudoalignments to BAM format .. done
+[  bam] sorting BAM files .. done
+[  bam] indexing BAM file .. done
+
+
+[quant] fragment length distribution will be estimated from the data
+[index] k-mer length: 31
+[index] number of targets: 142,375
+[index] number of k-mers: 120,679,684
+[index] number of equivalence classes: 511,876
+Warning: 142375 transcripts were defined in GTF file, but not in the index
+[quant] running in paired-end mode
+[quant] will process pair 1: 17mo-M-2_R1.fq.gz
+                             17mo-M-2_R2.fq.gz
+[quant] finding pseudoalignments for the reads ... done
+[quant] processed 56,680,665 reads, 53,038,038 reads pseudoaligned
+[quant] estimated average fragment length: 167.201
+[   em] quantifying the abundances ... done
+[   em] the Expectation-Maximization algorithm ran for 1,386 rounds
+[  bam] writing pseudoalignments to BAM format .. done
+[  bam] sorting BAM files .. done
+[  bam] indexing BAM file .. done
+
+
+[quant] fragment length distribution will be estimated from the data
+[index] k-mer length: 31
+[index] number of targets: 142,375
+[index] number of k-mers: 120,679,684
+[index] number of equivalence classes: 511,876
+Warning: 142375 transcripts were defined in GTF file, but not in the index
+[quant] running in paired-end mode
+[quant] will process pair 1: 17mo-M-3_R1.fq.gz
+                             17mo-M-3_R2.fq.gz
+[quant] finding pseudoalignments for the reads ... done
+[quant] processed 34,553,847 reads, 32,392,362 reads pseudoaligned
+[quant] estimated average fragment length: 184.225
+[   em] quantifying the abundances ... done
+[   em] the Expectation-Maximization algorithm ran for 1,609 rounds
+[  bam] writing pseudoalignments to BAM format .. done
+[  bam] sorting BAM files .. done
+[  bam] indexing BAM file .. done
+
+
+[quant] fragment length distribution will be estimated from the data
+[index] k-mer length: 31
+[index] number of targets: 142,375
+[index] number of k-mers: 120,679,684
+[index] number of equivalence classes: 511,876
+Warning: 142375 transcripts were defined in GTF file, but not in the index
+[quant] running in paired-end mode
+[quant] will process pair 1: 6mo-F-1_R1.fq.gz
+                             6mo-F-1_R2.fq.gz
+[quant] finding pseudoalignments for the reads ... done
+[quant] processed 45,347,377 reads, 42,914,347 reads pseudoaligned
+[quant] estimated average fragment length: 162.513
+[   em] quantifying the abundances ... done
+[   em] the Expectation-Maximization algorithm ran for 1,292 rounds
+[  bam] writing pseudoalignments to BAM format .. done
+[  bam] sorting BAM files .. done
+[  bam] indexing BAM file .. done
+
+
+[quant] fragment length distribution will be estimated from the data
+[index] k-mer length: 31
+[index] number of targets: 142,375
+[index] number of k-mers: 120,679,684
+[index] number of equivalence classes: 511,876
+Warning: 142375 transcripts were defined in GTF file, but not in the index
+[quant] running in paired-end mode
+[quant] will process pair 1: 6mo-F-2_R1.fq.gz
+                             6mo-F-2_R2.fq.gz
+[quant] finding pseudoalignments for the reads ... done
+[quant] processed 58,217,759 reads, 55,004,727 reads pseudoaligned
+[quant] estimated average fragment length: 167.255
+[   em] quantifying the abundances ... done
+[   em] the Expectation-Maximization algorithm ran for 1,303 rounds
+[  bam] writing pseudoalignments to BAM format .. done
+[  bam] sorting BAM files .. done
+[  bam] indexing BAM file .. done
+
+
+[quant] fragment length distribution will be estimated from the data
+[index] k-mer length: 31
+[index] number of targets: 142,375
+[index] number of k-mers: 120,679,684
+[index] number of equivalence classes: 511,876
+Warning: 142375 transcripts were defined in GTF file, but not in the index
+[quant] running in paired-end mode
+[quant] will process pair 1: 6mo-F-3_R1.fq.gz
+                             6mo-F-3_R2.fq.gz
+[quant] finding pseudoalignments for the reads ... done
+[quant] processed 47,350,842 reads, 44,504,799 reads pseudoaligned
+[quant] estimated average fragment length: 167.813
+[   em] quantifying the abundances ... done
+[   em] the Expectation-Maximization algorithm ran for 1,385 rounds
+[  bam] writing pseudoalignments to BAM format .. done
+[  bam] sorting BAM files .. done
+[  bam] indexing BAM file .. done
+
+
+[quant] fragment length distribution will be estimated from the data
+[index] k-mer length: 31
+[index] number of targets: 142,375
+[index] number of k-mers: 120,679,684
+[index] number of equivalence classes: 511,876
+Warning: 142375 transcripts were defined in GTF file, but not in the index
+[quant] running in paired-end mode
+[quant] will process pair 1: 6mo-M-1_R1.fq.gz
+                             6mo-M-1_R2.fq.gz
+[quant] finding pseudoalignments for the reads ... done
+[quant] processed 36,241,659 reads, 34,348,983 reads pseudoaligned
+[quant] estimated average fragment length: 164.64
+[   em] quantifying the abundances ... done
+[   em] the Expectation-Maximization algorithm ran for 1,267 rounds
+[  bam] writing pseudoalignments to BAM format .. done
+[  bam] sorting BAM files .. done
+[  bam] indexing BAM file .. done
+
+
+[quant] fragment length distribution will be estimated from the data
+[index] k-mer length: 31
+[index] number of targets: 142,375
+[index] number of k-mers: 120,679,684
+[index] number of equivalence classes: 511,876
+Warning: 142375 transcripts were defined in GTF file, but not in the index
+[quant] running in paired-end mode
+[quant] will process pair 1: 6mo-M-2_R1.fq.gz
+                             6mo-M-2_R2.fq.gz
+[quant] finding pseudoalignments for the reads ... done
+[quant] processed 49,144,832 reads, 46,250,671 reads pseudoaligned
+[quant] estimated average fragment length: 176.144
+[   em] quantifying the abundances ... done
+[   em] the Expectation-Maximization algorithm ran for 1,278 rounds
+[  bam] writing pseudoalignments to BAM format .. done
+[  bam] sorting BAM files .. done
+[  bam] indexing BAM file .. done
+
+
+[quant] fragment length distribution will be estimated from the data
+[index] k-mer length: 31
+[index] number of targets: 142,375
+[index] number of k-mers: 120,679,684
+[index] number of equivalence classes: 511,876
+Warning: 142375 transcripts were defined in GTF file, but not in the index
+[quant] running in paired-end mode
+[quant] will process pair 1: 6mo-M-3_R1.fq.gz
+                             6mo-M-3_R2.fq.gz
+[quant] finding pseudoalignments for the reads ... done
+[quant] processed 35,246,028 reads, 33,106,447 reads pseudoaligned
+[quant] estimated average fragment length: 167.528
+[   em] quantifying the abundances ... done
+[   em] the Expectation-Maximization algorithm ran for 1,370 rounds
+[  bam] writing pseudoalignments to BAM format .. done
+[  bam] sorting BAM files .. done
+[  bam] indexing BAM file .. done
+
+
+[quant] fragment length distribution will be estimated from the data
+[index] k-mer length: 31
+[index] number of targets: 142,375
+[index] number of k-mers: 120,679,684
+[index] number of equivalence classes: 511,876
+Warning: 142375 transcripts were defined in GTF file, but not in the index
+[quant] running in paired-end mode
+[quant] will process pair 1: P30-F-1_R1.fq.gz
+                             P30-F-1_R2.fq.gz
+[quant] finding pseudoalignments for the reads ... done
+[quant] processed 49,270,239 reads, 46,353,411 reads pseudoaligned
+[quant] estimated average fragment length: 168.702
+[   em] quantifying the abundances ... done
+[   em] the Expectation-Maximization algorithm ran for 1,323 rounds
+[  bam] writing pseudoalignments to BAM format .. done
+[  bam] sorting BAM files .. done
+[  bam] indexing BAM file .. done
+
+
+[quant] fragment length distribution will be estimated from the data
+[index] k-mer length: 31
+[index] number of targets: 142,375
+[index] number of k-mers: 120,679,684
+[index] number of equivalence classes: 511,876
+Warning: 142375 transcripts were defined in GTF file, but not in the index
+[quant] running in paired-end mode
+[quant] will process pair 1: P30-F-2_R1.fq.gz
+                             P30-F-2_R2.fq.gz
+[quant] finding pseudoalignments for the reads ... done
+[quant] processed 51,324,356 reads, 48,241,642 reads pseudoaligned
+[quant] estimated average fragment length: 174.198
+[   em] quantifying the abundances ... done
+[   em] the Expectation-Maximization algorithm ran for 1,401 rounds
+[  bam] writing pseudoalignments to BAM format .. done
+[  bam] sorting BAM files .. done
+[  bam] indexing BAM file .. done
+
+
+[quant] fragment length distribution will be estimated from the data
+[index] k-mer length: 31
+[index] number of targets: 142,375
+[index] number of k-mers: 120,679,684
+[index] number of equivalence classes: 511,876
+Warning: 142375 transcripts were defined in GTF file, but not in the index
+[quant] running in paired-end mode
+[quant] will process pair 1: P30-F-3_R1.fq.gz
+                             P30-F-3_R2.fq.gz
+[quant] finding pseudoalignments for the reads ... done
+[quant] processed 39,437,228 reads, 36,862,971 reads pseudoaligned
+[quant] estimated average fragment length: 192.648
+[   em] quantifying the abundances ... done
+[   em] the Expectation-Maximization algorithm ran for 1,319 rounds
+[  bam] writing pseudoalignments to BAM format .. done
+[  bam] sorting BAM files .. done
+[  bam] indexing BAM file .. done
+
+
+[quant] fragment length distribution will be estimated from the data
+[index] k-mer length: 31
+[index] number of targets: 142,375
+[index] number of k-mers: 120,679,684
+[index] number of equivalence classes: 511,876
+Warning: 142375 transcripts were defined in GTF file, but not in the index
+[quant] running in paired-end mode
+[quant] will process pair 1: P30-M-1_R1.fq.gz
+                             P30-M-1_R2.fq.gz
+[quant] finding pseudoalignments for the reads ... done
+[quant] processed 49,523,233 reads, 46,698,237 reads pseudoaligned
+[quant] estimated average fragment length: 163.77
+[   em] quantifying the abundances ... done
+[   em] the Expectation-Maximization algorithm ran for 1,252 rounds
+[  bam] writing pseudoalignments to BAM format .. done
+[  bam] sorting BAM files .. done
+[  bam] indexing BAM file .. done
+
+
+[quant] fragment length distribution will be estimated from the data
+[index] k-mer length: 31
+[index] number of targets: 142,375
+[index] number of k-mers: 120,679,684
+[index] number of equivalence classes: 511,876
+Warning: 142375 transcripts were defined in GTF file, but not in the index
+[quant] running in paired-end mode
+[quant] will process pair 1: P30-M-2_R1.fq.gz
+                             P30-M-2_R2.fq.gz
+[quant] finding pseudoalignments for the reads ... done
+[quant] processed 53,994,363 reads, 51,003,873 reads pseudoaligned
+[quant] estimated average fragment length: 176.546
+[   em] quantifying the abundances ... done
+[   em] the Expectation-Maximization algorithm ran for 1,175 rounds
+[  bam] writing pseudoalignments to BAM format .. done
+[  bam] sorting BAM files .. done
+[  bam] indexing BAM file .. done
+
+
+[quant] fragment length distribution will be estimated from the data
+[index] k-mer length: 31
+[index] number of targets: 142,375
+[index] number of k-mers: 120,679,684
+[index] number of equivalence classes: 511,876
+Warning: 142375 transcripts were defined in GTF file, but not in the index
+[quant] running in paired-end mode
+[quant] will process pair 1: P30-M-3_R1.fq.gz
+                             P30-M-3_R2.fq.gz
+[quant] finding pseudoalignments for the reads ... done
+[quant] processed 38,413,185 reads, 36,188,807 reads pseudoaligned
+[quant] estimated average fragment length: 175.269
+[   em] quantifying the abundances ... done
+[   em] the Expectation-Maximization algorithm ran for 1,152 rounds
+[  bam] writing pseudoalignments to BAM format .. done
+[  bam] sorting BAM files .. done
+[  bam] indexing BAM file .. done
+

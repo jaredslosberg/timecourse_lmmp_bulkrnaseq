@@ -1,0 +1,17 @@
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+plots/*
+results/*
+data/*
+kallisto_out*/
+fastqs/
+*.Rproj
+preprocessing/STAR/17mo*
+preprocessing/STAR/6mo*
+preprocessing/STAR/P30*
+preprocessing/STAR/deprecated
+scripts/*.html
+scripts/*/*.html
+

@@ -1,0 +1,383 @@
+---
+title: "aged timecourse bulkRNA-seq "
+output: html_document
+---
+
+
+```{r, include= F}
+library(tidyverse)
+library(glue)
+library(DESeq2)
+library(here)
+library(tximport)
+library(RColorBrewer)
+library(vsn)
+library(ComplexHeatmap)
+library(biomaRt)
+```
+
+Read in experimental metadata
+```{r}
+data_dir <- here("kallisto_out_merged/")
+metadata_path <- here("metadata_merged.csv")
+list.files(data_dir)
+
+
+exp_metadata <- read.csv(metadata_path, header = T)
+
+abundance_filepath <- paste0(data_dir, exp_metadata[,"sample_name"], "/abundance.tsv")
+names(abundance_filepath) <- exp_metadata[, "sample_name"]
+file.exists(abundance_filepath)
+
+# named_runs <- exp_metadata %>% deframe
+```
+
+Read in gene abundance matrices for each run
+```{r}
+txdb <- GenomicFeatures::makeTxDbFromGFF("/reference/genomes/mouse/gencode/vM27/gencode.vM27.annotation.gff3.gz")
+k <- keys(txdb, keytype = "TXNAME" )
+tx2gene <- select(txdb, k, "GENEID", "TXNAME")
+
+#There is an issue with how kallisto writes its .h5 files (https://support.bioconductor.org/p/130419/)
+#So use tsv, and dropInfReps=T to avoid anything related to the .h5 file
+txi <- tximport(abundance_filepath, type = "kallisto", txOut = F, tx2gene = tx2gene, ignoreAfterBar = T, dropInfReps = T, countsFromAbundance = "scaledTPM")
+
+#write.csv(txi$counts, here("data/abundance_to_counts_matrix.csv"), quote = F)
+```
+
+Check transformations from abundance to counts
+```{r}
+#output from kallisto quantification
+txi$abundance %>% head
+
+txi$counts %>% head
+
+#qplot(log2(txi$abundance), log2(txi$counts), color = txi$length) + scale_color_gradient(name = "tx length", trans = "log2",breaks = c(500, 10000, 30000, 60000, 120000), labels = c(500, 10000, 30000, 60000, 120000))
+```
+
+
+
+
+Get biomart annotations for gene short names
+```{r}
+library(biomaRt)
+#get gene names, make sure to use the right ensembl archive for genome used for alignment
+#listMarts() 
+ensembl <- useMart("ensembl")
+datasets <- listDatasets(ensembl)
+ensembl <- useDataset("mmusculus_gene_ensembl",mart=ensembl)
+
+gene_id_trimmed <- stringr::str_split_fixed(unique(tx2gene[,"GENEID"]),"\\.",2)[,1]
+gene_description <- getBM(attributes = c("ensembl_gene_id_version","external_gene_name","description","chromosome_name"),
+                   filters = "ensembl_gene_id", values =gene_id_trimmed,  mart = ensembl)
+
+geneid2name <- gene_description[,c("ensembl_gene_id_version", "external_gene_name")] %>% 
+  mutate(ensembl_gene_id_trimmed = str_split_fixed(ensembl_gene_id_version, "\\.", 2) %>% .[,1])
+
+gene_ids <- geneid2name %>% mutate(ensemblgene_id = ensembl_gene_id_version)
+```
+
+Following DESEQ tutorial @ [here](http://bioconductor.org/packages/release/bioc/vignettes/DESeq2/inst/doc/DESeq2.html)
+
+Prep data frame with sample <<-->> group info
+```{r}
+# #experimental design
+# cond <- colnames(txi$abundance)
+# 
+# coldata <- data.frame("condition" = colnames(total_counts)) %>%
+#   mutate(condition = case_when(
+#     grepl("HF_", condition) ~ "HF",
+#     grepl("NF_", condition) ~ "NF",
+#     grepl("NF-sugar_", condition) ~ "NF-sugar",
+#     grepl("HF-sugar_", condition) ~ "HF-sugar") %>%
+#       as.factor()
+#   ) 
+
+coldata <- exp_metadata %>% mutate(tech.rep.collapsed = paste(age, sex, rep, sep = "-"))
+
+assertthat::assert_that(all(coldata$sample_name == colnames(txi$abundance)))
+
+coldata 
+#Batches or which tissues are from the same animal are unknown
+
+
+
+```
+Create DeSeq object with counts and exp design. Don't include batch at first
+```{r}
+age_vec <- factor(coldata$age, ordered = F, levels = c("P30","6mo","17mo"))
+age_vec_ordered <- factor(coldata$age, ordered = F, levels = c("P30","6mo","17mo"))
+
+design_matrix <- model.matrix(~age_vec)
+colnames(design_matrix)[2:3] <- colnames(design_matrix)[2:3] %>% str_replace(., "_vec","")
+design_matrix_ordered <- model.matrix(~ factor(coldata$age, ordered = T, levels = c("P30","6mo","17mo")))
+colnames(design_matrix_ordered)[2:3]<- colnames(design_matrix_ordered)[2:3] %>% str_replace(., "age_vec","")
+dds <- DESeqDataSetFromTximport(txi,
+                              colData = coldata,
+                              design = design_matrix)
+dds_ordered <- DESeqDataSetFromTximport(txi,
+                              colData = coldata,
+                              design = design_matrix_ordered)
+
+```
+
+```{r}
+#Filter out genes with a sum of all abundances across samples of less than 10
+keep <- rowSums(counts(dds)) >= 10
+genes_keep <- names(keep[keep])
+dds <- dds[keep,]
+
+agg <- counts(dds) %>% as.matrix() %>% Matrix::colSums()
+barplot(unname(agg), horiz = T, ylab = "samples", xlab = "number of reads")
+
+
+# dds$condition <- factor(dds$condition, levels = c("GF","OMM","SPF","OMMMC2D2","OMMMC2D4","OMMMC2D6","OMMMC2D8"))
+
+dds
+
+```
+
+Diff expression with default parameters (maybe revisit)
+I don't have replicates, and I didn't think this would work without them. Is it treating 20wk-untreated and 20wk-treated as replicates for 20wk?
+```{r}
+dds <- DESeq(dds)
+res <- results(dds)
+res
+```
+
+```{r}
+rownames(dds) <- rownames(dds) %>% str_split_fixed(., "\\.", 2) %>% .[,1]
+genes_keep_trimmed <- genes_keep %>% str_split_fixed(., "\\.", 2) %>% .[,1]
+
+geneid2name <- geneid2name %>% tibble::column_to_rownames(var = "ensembl_gene_id_trimmed")
+
+dup_ind <- geneid2name[genes_keep_trimmed,"external_gene_name"] %>% duplicated() %>% which
+dup_genes_sn <- geneid2name[genes_keep_trimmed, "external_gene_name"] %>% .[dup_ind]
+dup_genes <- rownames(geneid2name)[dup_ind]
+
+```
+
+Return results for a specific sample comparison
+```{r}
+res <- results(dds, name = "age17mo")
+res %>% head
+summary(res)
+
+```
+comparing 17month to 30 day, 8% of genes are upregulated & 4% of genes are downreg
+
+
+```{r}
+resultsNames(dds)
+resLFC <- lfcShrink(dds,coef = "age17mo", type="apeglm")
+resLFC %>% class
+
+
+```
+
+```{r}
+
+plotMA(res, ylim=c(-2,2), main = res@elementMetadata@listData$description[2])
+
+plotMA(resLFC, ylim=c(-2,2), main = res@elementMetadata@listData$description[2])
+
+```
+
+```{r}
+
+# this gives log2(n + 1)
+ntd <- normTransform(dds)
+library("vsn")
+
+rld <- rlog(dds, blind=FALSE)
+
+vsd <- vst(dds, blind=FALSE)
+
+#high variance genes
+rowData(vsd)$vsd_var <- rowVars(assay(vsd))
+var_genes <- rowData(vsd) %>% as.data.frame() %>% slice_max(., order_by = vsd_var, n = 500)
+#rld <- rlog(dds, blind=FALSE)
+head(assay(vsd),3)
+```
+
+```{r}
+meanSdPlot(assay(ntd))
+meanSdPlot(assay(vsd))
+meanSdPlot(assay(rld))
+
+```
+
+```{r}
+sampleDists <- dist(t(assay(vsd)))
+sampleDistMatrix <- as.matrix(sampleDists)
+colnames(sampleDistMatrix) <- NULL
+colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
+p <- Heatmap(sampleDistMatrix,
+         clustering_distance_rows=sampleDists,
+         clustering_distance_columns=sampleDists,
+         col=colors, row_names_gp = gpar(fontsize = 6))
+
+cor_mat <- cor(assay(vsd))
+colors <- colorRampPalette(brewer.pal(9, "Reds"))(255)
+colnames(cor_mat) <- NULL
+p2 <- Heatmap(cor_mat,
+         clustering_distance_rows="canberra",
+         clustering_distance_columns="canberra",
+         col=colors, row_names_gp = gpar(fontsize = 6))
+
+
+p
+p2
+
+# pdf(here(glue("plots/", de_condition, "_similarity_heatmaps.pdf")), height = 12, width = 14)
+# p
+# p2
+# dev.off()
+```
+This distance-based similarity matrix shows that the replicates are not ideal replcates. HF-sugar/1/2 cluster well together with low distance, but the rest do not seem to group with their condition. For example, HF belongs in a different branch than HF1/2 and HF-sugar/1/2. HF2 is more similar to HF-sugar than HF/1
+
+```{r}
+
+#on 500 high-variance genes
+sampleDists <- dist(t(assay(vsd[rownames(var_genes),])))
+sampleDistMatrix <- as.matrix(sampleDists)
+colnames(sampleDistMatrix) <- NULL
+colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
+p <- Heatmap(sampleDistMatrix,
+         clustering_distance_rows=sampleDists,
+         clustering_distance_columns=sampleDists,
+         col=colors, row_names_gp = gpar(fontsize = 6))
+
+cor_mat <- cor(assay(vsd[rownames(var_genes),]))
+colors <- colorRampPalette(brewer.pal(9, "Reds"))(255)
+colnames(cor_mat) <- NULL
+p2 <- Heatmap(cor_mat,
+         clustering_distance_rows="canberra",
+         clustering_distance_columns="canberra",
+         col=colors, row_names_gp = gpar(fontsize = 6))
+
+
+p
+p2
+
+# pdf(here(glue("plots/", de_condition, "_similarity_heatmaps.pdf")), height = 12, width = 14)
+# p
+# p2
+# dev.off()
+```
+
+```{r}
+# pcaData <- plotPCA(vsd, intgroup=c("age", "sex", "rep", "cell", "sizeFactor","library_RIN"), returnData = T)
+# percentVar <- round(100 * attr(pcaData, "percentVar"))
+# 
+# 
+# features <- c("age", "sex", "rep", "cell", "sizeFactor")
+# map(features, function(feat){
+# ggplot(pcaData, aes_string("PC1", "PC2", color=feat)) +
+#   geom_point(size=3) +
+#   xlab(paste0("PC1: ",percentVar[1],"% variance")) +
+#   ylab(paste0("PC2: ",percentVar[2],"% variance")) + 
+#   coord_fixed()
+# })
+
+
+vsd_sub <- vsd
+
+pcaData <- prcomp(t(assay(vsd_sub)), center = T, scale = F)
+var_df <- data.frame(stdev = pcaData$sdev) %>% mutate(var = stdev^2, percent_var = round(var/sum(var), 3)*100)
+pca_loadings <- pcaData$rotation %>% as.data.frame() %>%
+  rownames_to_column(var = "ensembl_gene_id_trimmed") %>% 
+  left_join(., gene_ids[,c("ensembl_gene_id_trimmed","external_gene_name")]) %>%
+  relocate(external_gene_name)
+
+assertthat::assert_that(all(rownames(pcaData_sub) == rownames(colData(vsd_sub))))
+pca_sample_weights <- cbind(pcaData_sub$x, colData(vsd_sub)) %>% as.data.frame()
+
+features <- c("age", "sex", "rep", "cell", "sizeFactor","library_RIN")
+map(features, function(feat){
+ggplot(pca_sample_weights, aes_string("PC1", "PC2", color=feat)) +
+  geom_point(size=3) +
+  xlab(paste0("PC1: ",percentVar[1],"% variance")) +
+  ylab(paste0("PC2: ",percentVar[2],"% variance")) + 
+  coord_fixed()
+})
+
+
+#PC1 separates out great from good samples based on RIN. But without those two outliers, the correlation is not as strong so there must be other important variability captured in PC1
+ggplot(pca_sample_weights, aes(x = PC1, y= library_RIN, color = age, shape = sex)) + geom_point()
+# ggplot(pcaData, aes(PC1, PC2, color=condition, shape = batch)) +
+#   geom_point(size=3) +
+#   xlab(paste0("PC1: ",percentVar[1],"% variance")) +
+#   ylab(paste0("PC2: ",percentVar[2],"% variance")) + 
+#   coord_fixed()
+
+```
+
+```{r}
+cat_features <- c("age","sex","rep")
+library(caret)
+feature_correlations <- map_df(cat_features, function(feat){
+  sub <- pca_sample_weights %>% dplyr::select(starts_with("PC"), all_of(feat))
+  sub[,feat] <- factor(sub[,feat])
+  dummy <- dummyVars(" ~.", data = sub)
+  final_df <- data.frame(predict(dummy, newdata = sub))
+  variables <- colnames(final_df)[!startsWith(colnames(final_df),"PC")]
+  
+  cor_df <- cor(final_df)
+  ComplexHeatmap::Heatmap(cor_df)
+  
+  as.data.frame(cor_df[variables,startsWith(colnames(cor_df), "PC")])
+})
+
+cont_features <- c("library_RIN","sizeFactor")
+feature_correlations_cont <- map_df(cont_features, function(feat){
+  sub <-  pca_sample_weights %>% dplyr::select(starts_with("PC"), all_of(feat))
+
+  
+  cor_df <- cor(sub)
+  variables <- colnames(cor_df)[!startsWith(colnames(cor_df),"PC")]
+
+  ComplexHeatmap::Heatmap(cor_df)
+  
+  as.data.frame(cor_df[variables,startsWith(colnames(cor_df), "PC"), drop = F])
+})
+
+all_feat_cor_mat <- as.matrix(rbind(feature_correlations, feature_correlations_cont))
+  ComplexHeatmap::Heatmap(all_feat_cor_mat)
+
+```
+
+Differential expression on relevant conditions
+```{r}
+test_names <- resultsNames(dds)[-c(1)]
+gene_ids <- geneid2name %>% rownames_to_column(var = "ensemblgene_id") %>% dplyr::select(-c("ensembl_gene_id_version"))
+
+if(!dir.exists(here("results/diff_exp_collapsed_before"))) dir.create(here("results/diff_exp_collapsed_before"))
+map(test_names, function(name){
+  comp_res <- results(dds,name = name) %>%
+    as.data.frame() %>%
+    rownames_to_column(var = "ensemblgene_id") %>%
+    left_join(., gene_ids, by= "ensemblgene_id") %>%
+    relocate(external_gene_name) %>%
+    arrange(desc(log2FoldChange))
+  
+  write.csv(comp_res, paste0(here("results/diff_exp_collapsed_before/"), name,".csv"))
+})
+
+
+```
+
+
+```{r}
+dds <- DESeq(dds)
+res <- results(dds)
+res
+
+dds_ordered <- DESeq(dds_ordered)
+res_ordered <- results(dds_ordered)
+res
+```
+```{r}
+saveRDS(dds, here("data/bulkrna_dds_collapsed_before.rds"))
+```
+

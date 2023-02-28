@@ -1,0 +1,202 @@
+---
+title: "Projections"
+author: "Jared Slosberg"
+date: "11/21/2022"
+output: html_document
+---
+
+```{r, include= F}
+library(tidyverse)
+library(glue)
+library(DESeq2)
+library(here)
+library(tximport)
+library(RColorBrewer)
+library(vsn)
+library(ComplexHeatmap)
+library(biomaRt)
+```
+
+Read in experimental metadata
+```{r}
+metadata_path <- here("metadata_merged.csv")
+
+
+exp_metadata <- read.csv(metadata_path, header = T)
+
+#subset to intestine samples (remove fat and stomach)\
+
+# named_runs <- exp_metadata %>% deframe
+```
+
+#Read in DESEQ2 object
+```{r}
+dds <- readRDS(here("data/bulkrna_dds_collapsed_before.rds"))
+```
+
+Read in learned and other expression signatures
+```{r}
+lmmp_gw <- read.csv("/data/users/jared/ENS/6mo_LMMP/results/NMF/lmmp/old_pattern_run/50dims/pattern_gene_weights.csv", row.names = 1 )
+
+lmmp_gw_clean <- lmmp_gw 
+
+head(lmmp_gw_clean)
+```
+
+Get biomart annotations for gene short names
+```{r}
+library(biomaRt)
+#get gene names, make sure to use the right ensembl archive for genome used for alignment
+#listMarts() 
+ensembl <- useMart("ensembl")
+datasets <- listDatasets(ensembl)
+ensembl <- useDataset("mmusculus_gene_ensembl",mart=ensembl)
+
+gene_id_trimmed <- stringr::str_split_fixed(rownames(dds),"\\.",2)[,1]
+gene_description <- getBM(attributes = c("ensembl_gene_id_version","external_gene_name","description","chromosome_name"),
+                   filters = "ensembl_gene_id", values =gene_id_trimmed,  mart = ensembl)
+
+geneid2name <- gene_description[,c("ensembl_gene_id_version", "external_gene_name")] %>% 
+  mutate(ensembl_gene_id_trimmed = str_split_fixed(ensembl_gene_id_version, "\\.", 2) %>% .[,1])
+
+```
+
+```{r}
+library(projectR)
+
+rownames(dds)
+vsd <- vst(dds, blind=FALSE)
+vsd_cleaned <- as.matrix(assay(vsd)) %>% as.data.frame() %>% rownames_to_column(var = "ensembl_gene_id_version") %>% left_join(., geneid2name)  %>% drop_na() %>% dplyr::select(-starts_with("ensembl")) %>% filter(!duplicated(external_gene_name)) %>% column_to_rownames(var = "external_gene_name") %>% as.matrix()
+
+set.seed(007)
+proj_res <- projectR(vsd_cleaned, as.matrix(lmmp_gw_clean))
+
+write.csv(proj_res, here("results/NMF/lmmp_projection/bulk_in_tc_lmmp.csv"), quote = F, row.names = T)
+
+proj_long <- proj_res %>% as.data.frame() %>% rownames_to_column(var = "pattern") %>% pivot_longer(!pattern,names_to = "sample_name", values_to = "weight") %>%
+  left_join(., exp_metadata)
+
+proj_long <- proj_long %>% mutate(
+  age = factor(age, levels = c("P30","6mo","17mo")),
+  age_numeric = case_when(age == "17mo" ~ 510,
+                          age == "6mo" ~ 180 ,
+                          age == "P30" ~ 30))
+```
+
+```{r}
+pl <- ggplot(proj_long) + geom_point(aes(x = age, y = weight, color = sample_name)) + facet_wrap(~pattern, ncol = 5, scales = "free_y")
+
+
+pl <- ggplot(proj_long,aes(x = age_numeric, y = weight, color = sample_name, group = "age_numeric"))  +
+  # stat_summary(fun = mean, geom = "point",position=position_dodge2(width = .3)) + 
+  # stat_summary(fun.data = mean_se, geom = "errorbar",position=position_dodge2(width = 0.2), width = .3) +
+  geom_point(color = "black", size = 0.2, position = position_dodge(width=.3)) +
+  facet_wrap(~pattern, ncol = 5, scales = "free_y") + 
+  theme(axis.text.y = element_blank()) +
+  geom_smooth(method= "lm")
+
+if(!dir.exists(here("plots/NMF/lmmp_projections"))){
+  dir.create(here("plots/NMF/lmmp_projections"))
+}
+
+pdf(here("plots/NMF/lmmp_projections/projection_weights_by_sample.pdf"), height = 20, width = 15)
+pl
+dev.off()
+```
+
+```{r}
+pattern_names <- colnames(lmmp_gw_clean)
+lm_res <- map_df(pattern_names, function(patt){
+  fit <- lm(weight ~ age_numeric, filter(proj_long, pattern == patt))
+  data.frame(pattern = patt, coef = coefficients(fit)["age_numeric"],
+             pvalue = summary(fit)$coefficients["age_numeric",4])
+}) %>% mutate(sig = pvalue < 0.05)
+
+ggplot(lm_res, aes(x = pattern, y = coef)) + geom_bar(stat = "identity") + 
+  theme(axis.text.x = element_text(angle =90)) +
+  geom_text(data = filter(lm_res, sig == T), aes(x = pattern, y = coef),label = "*") +
+  ggtitle("Coefficient for age in pattern_weight ~ numeric(age. 6mo LMMP patterns")
+  
+```
+
+
+Projection of bulk signatures with lmmp scRNA. "Where are these genes expressed"
+
+```{r}
+lmmp <- readRDS("/data/users/jared/ENS/Timecourse_ENS/TC_LMMP.rds")
+
+#compare distributions of normalized counts to make sure projection is fair
+as.matrix(assay(lmmp[,1:1000], "logcounts")) %>% hist(breaks = 100)
+as.matrix(assay(lmmp[,1:1000], "logcounts")) %>% unlist() %>% .[. > 1] %>% hist(breaks = 100)
+as.matrix(assay(vsd)) %>% hist(breaks = 100)
+```
+
+```{r}
+
+dimensionalities <- c("10","15","20","25")
+nmf_list <- map(dimensionalities, function(dimensionality){
+  
+    gene_weights <- read.csv(here("results/NMF", paste0("dim",dimensionality), "gene_weights.csv"),row.names = 1)
+    sample_weights <- read.csv(here("results/NMF", paste0("dim",dimensionality), "sample_weights.csv"), row.names = 1)
+  
+  return(list(A = sample_weights, P = gene_weights))
+}) %>% setNames(dimensionalities)
+```
+
+```{r}
+source("/data/users/jared/ENS/Timecourse_ENS/scripts/accessory_functions/pattern_plotting.R")
+
+umap_coord <- reducedDim(lmmp, "UMAP") %>% as.data.frame() %>% rownames_to_column(var = "cell_id") 
+colnames(umap_coord) <- c("cell_id", "UMAP1","UMAP2")
+
+nmf_list <- map(dimensionalities, function(dimensionality){
+  
+    gw <- nmf_list[[dimensionality]][["P"]] %>% as.matrix()
+    proj_res <- projectR(as.matrix(assay(lmmp, "logcounts")), gw) 
+    
+    # proj_long <- proj_res %>%
+    #   as.data.frame() %>% 
+    #   rownames_to_column(var = "pattern") %>%
+    #   pivot_longer(!pattern,names_to = "cell_id", values_to = "weight") %>%
+    #   left_join(., umap_coord)
+    
+    pData(lmmp) <- pData(lmmp) %>% as.data.frame() %>% rownames_to_column(var = "cell_id") %>%
+      left_join(., rownames_to_column(as.data.frame(t(proj_res)), "cell_id")) %>% column_to_rownames("cell_id") %>% DataFrame()
+    
+    embs <- lapply(1:as.numeric(dimensionality), plotCellPatterns, lmmp, do.clip = c(0,.98), pattern_prefix = "pattern")
+    embs_rast <- map(embs, function(x){
+      x %>% ggrastr::rasterise(dpi = 200)
+      })
+  
+    
+    pdf(here(paste0("plots/NMF/lmmp_projections/tc_lmmp_in_zasloff_patterns_k",dimensionality,".pdf")),
+        width = 25, height = as.numeric(dimensionality)/2)
+
+        print(ggpubr::ggarrange(plotlist = embs_rast, ncol = 5))
+    dev.off()
+    
+    write.csv(proj_res, here(paste0("results/NMF/lmmp_projection/tc_lmmp_in_zasloff_patterns_k",dimensionality,".csv")), quote = F, row.names = T)
+
+    return(proj_res)
+
+}) %>% setNames(dimensionalities)
+
+
+```
+```{r, eval = F}
+library(preprocessCore)
+
+
+dat <- runif(1000)
+hist(dat)
+test <- qnorm((rank(dat,na.last="keep")-0.5)/sum(!is.na(dat)))
+hist(test)
+
+proj_res[1,1:1000] %>% hist
+proj_res[3,1:1000] %>% qnorm((rank(.,na.last="FALSE")-0.5)/sum(!is.na(.))) %>% hist()
+proj_res[3,1:1000] %>% qnorm((rank(.,na.last="FALSE")-0.5)/sum(!is.na(.))) %>% mean(na.rm = T)
+
+x <- (rank(proj_res[1,1:1000] ,na.last="keep")-0.5)/sum(!is.na(proj_res[1,1:1000]))
+
+```
+
