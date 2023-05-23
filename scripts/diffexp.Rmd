@@ -1,0 +1,450 @@
+---
+title: "aged timecourse bulkRNA-seq "
+output: html_document
+---
+
+
+```{r, include= F}
+library(tidyverse)
+library(glue)
+library(DESeq2)
+library(here)
+library(tximport)
+library(RColorBrewer)
+library(vsn)
+library(ComplexHeatmap)
+library(biomaRt)
+```
+
+Read in experimental metadata
+```{r}
+data_dir <- here("kallisto_out_merged/")
+metadata_path <- here("metadata_merged.csv")
+list.files(data_dir)
+
+
+exp_metadata <- read.csv(metadata_path, header = T)
+
+abundance_filepath <- paste0(data_dir, exp_metadata[,"sample_name"], "/abundance.tsv")
+names(abundance_filepath) <- exp_metadata[, "sample_name"]
+file.exists(abundance_filepath)
+
+# named_runs <- exp_metadata %>% deframe
+```
+
+Read in gene abundance matrices for each run
+```{r}
+txdb <- GenomicFeatures::makeTxDbFromGFF("/reference/genomes/mouse/gencode/vM27/gencode.vM27.annotation.gff3.gz")
+k <- keys(txdb, keytype = "TXNAME" )
+tx2gene <- select(txdb, k, "GENEID", "TXNAME")
+
+#There is an issue with how kallisto writes its .h5 files (https://support.bioconductor.org/p/130419/)
+#So use tsv, and dropInfReps=T to avoid anything related to the .h5 file
+txi <- tximport(abundance_filepath, type = "kallisto", txOut = F, tx2gene = tx2gene, ignoreAfterBar = T, dropInfReps = T, countsFromAbundance = "scaledTPM")
+
+write.csv(txi$counts, here("data/abundance_to_counts_matrix.csv"), quote = F)
+```
+
+Check transformations from abundance to counts
+```{r}
+#output from kallisto quantification
+txi$abundance %>% head
+
+txi$counts %>% head
+
+#qplot(log2(txi$abundance), log2(txi$counts), color = txi$length) + scale_color_gradient(name = "tx length", trans = "log2",breaks = c(500, 10000, 30000, 60000, 120000), labels = c(500, 10000, 30000, 60000, 120000))
+```
+
+
+
+
+Get biomart annotations for gene short names
+```{r}
+library(biomaRt)
+#get gene names, make sure to use the right ensembl archive for genome used for alignment
+#listMarts() 
+ensembl <- useMart("ensembl", host = "ensembl.org")
+datasets <- listDatasets(ensembl)
+ensembl <- useDataset("mmusculus_gene_ensembl",mart=ensembl)
+
+gene_id_trimmed <- stringr::str_split_fixed(unique(tx2gene[,"GENEID"]),"\\.",2)[,1]
+gene_description <- getBM(attributes = c("ensembl_gene_id_version","external_gene_name","description","chromosome_name"),
+                   filters = "ensembl_gene_id", values =gene_id_trimmed,  mart = ensembl)
+
+geneid2name <- gene_description[,c("ensembl_gene_id_version", "external_gene_name")] %>% 
+  mutate(ensembl_gene_id_trimmed = str_split_fixed(ensembl_gene_id_version, "\\.", 2) %>% .[,1])
+
+gene_ids <- geneid2name %>% mutate(ensemblgene_id = ensembl_gene_id_version)
+
+```
+
+Following DESEQ tutorial @ [here](http://bioconductor.org/packages/release/bioc/vignettes/DESeq2/inst/doc/DESeq2.html)
+
+Prep data frame with sample <<-->> group info
+```{r}
+coldata <- exp_metadata %>%
+  mutate(tech.rep.collapsed = paste(age, sex, rep, sep = "-")) %>% 
+  mutate(age = factor(age, levels = c("P30","6mo","17mo"))) %>% 
+  mutate(rep = factor(rep, levels = c("1","2","3")))
+
+assertthat::assert_that(all(coldata$sample_name == colnames(txi$abundance)))
+
+coldata %>% str
+
+
+
+```
+
+Create DeSeq object with counts and exp design. Model includes age, batch (rep), and RIN as a measure of quality
+```{r}
+age_vec <- factor(coldata$age, ordered = F, levels = c("P30","6mo","17mo"))
+age_vec_ordered <- factor(coldata$age, ordered = F, levels = c("P30","6mo","17mo"))
+
+
+dds_full <- DESeqDataSetFromTximport(txi,
+                              colData = coldata,
+                              design = ~ age + library_RIN + rep)
+
+
+```
+
+Sample Filtering (Before gene filtering)
+```{r}
+agg <- counts(dds_full) %>% as.matrix() %>% Matrix::colSums() %>% enframe(name = "sample_name", value = "counts")
+ggplot(agg) + geom_col(aes(x = sample_name, y = counts)) + theme(axis.text.x = element_text(angle = -90))
+
+#Based on outlier status in distance matrix, lower RIN, and major source of outliers determined by cooks distance during model fitting, remove sample 17mo-M-1
+sample_remove <- "17mo-M-1"
+samples_keep <- setdiff(colnames(dds_full), sample_remove)
+```
+
+Gene Filtering
+```{r}
+#Filter on samples
+dds <- dds_full[, samples_keep]
+
+#Filter out genes with a sum of all abundances across samples of less than 10
+keep_count <- rowSums(counts(dds)) >= 10
+table(keep_count)
+
+#Filter out genes that are not detected above 10 counts in at least three samples
+keep_sample_filter <- (rowSums(counts(dds) >= 10) >= 3) 
+table(keep_sample_filter)
+
+#use the sample filter, it is stricter since requires 10 counts in at least 3 samples (requires >= 30 counts). Removes about 10k more genes than count filter, 
+#total of 32k genes removed and 23k genes kept
+genes_keep <- names(keep_sample_filter[keep_sample_filter])
+
+gene_counts <- counts(dds[1:1000,]) %>% as.data.frame() %>%
+  tibble::rownames_to_column(var = "ensemblgene_id") %>%
+  pivot_longer(!ensemblgene_id, values_to = "counts", names_to = "sample_name") %>%
+  mutate(logcounts = log(counts+1), 
+         gene_status = ifelse(ensemblgene_id %in% genes_keep, "kept","removed"))
+
+means_df <- gene_counts %>% group_by(gene_status) %>% summarise(mean_logcounts = mean(logcounts))
+
+gene_counts %>% ggplot(., aes(x = logcounts, group_by = ensemblgene_id)) +
+  geom_density(color = "grey80") +
+  geom_vline(data = means_df, aes(xintercept = mean_logcounts, color = "red")) +
+  facet_wrap(~gene_status) + 
+  ggtitle("distribution of log-expression by gene", subtitle = "separated by filtering status & red line is group mean")
+
+rowData(dds) <- rowData(dds) %>% as.data.frame() %>%
+  rownames_to_column(var = "ensembl_gene_id_version") %>%
+  left_join(., geneid2name) %>% DataFrame()
+
+```
+
+
+
+Diff expression with default parameters (maybe revisit)
+```{r}
+
+dds <- dds[genes_keep, ]
+dds <- DESeq(dds)
+res <- results(dds)
+res
+```
+
+```{r}
+rownames(dds) <- rownames(dds) %>% str_split_fixed(., "\\.", 2) %>% .[,1]
+
+
+genes_keep_trimmed <- genes_keep %>% str_split_fixed(., "\\.", 2) %>% .[,1]
+
+geneid2name <- geneid2name %>% tibble::column_to_rownames(var = "ensembl_gene_id_trimmed")
+
+dup_ind <- geneid2name[genes_keep_trimmed,"external_gene_name"] %>% duplicated() %>% which
+dup_genes_sn <- geneid2name[genes_keep_trimmed, "external_gene_name"] %>% .[dup_ind]
+dup_genes <- rownames(geneid2name)[dup_ind]
+
+```
+
+Return results for a specific sample comparison
+```{r}
+print("age17mo")
+res_age_17mo <- results(dds, name = "age_17mo_vs_P30")
+res_age_17mo %>% head
+summary(res_age_17mo)
+
+print("age6mo")
+res_age_6mo <- results(dds, name = "age_6mo_vs_P30")
+res_age_6mo %>% head
+summary(res_age_6mo)
+
+print("RIN")
+res <- results(dds, name = "library_RIN")
+res %>% head
+summary(res)
+
+print("batch")
+res <- results(dds, name = "rep_2_vs_1")
+res %>% head
+summary(res)
+
+print("batch")
+res <- results(dds, name = "rep_3_vs_1")
+res %>% head
+summary(res)
+
+```
+
+
+```{r}
+resultsNames(dds)
+resLFC <- lfcShrink(dds,coef = "age_17mo_vs_P30", type="apeglm")
+resLFC %>% class
+
+
+```
+
+```{r}
+
+plotMA(res_age_17mo, ylim=c(-2,2), main = "17mo vs P30")
+
+
+```
+
+```{r}
+
+# this gives log2(n + 1)
+ntd <- normTransform(dds)
+library("vsn")
+
+rld <- rlog(dds, blind=FALSE)
+
+vsd <- vst(dds, blind=FALSE)
+
+#high variance genes
+rowData(vsd)$vsd_var <- rowVars(assay(vsd))
+var_genes <- rowData(vsd) %>% as.data.frame() %>% slice_max(., order_by = vsd_var, n = 500)
+#rld <- rlog(dds, blind=FALSE)
+head(assay(vsd),3)
+```
+
+```{r}
+meanSdPlot(assay(ntd))
+meanSdPlot(assay(vsd))
+meanSdPlot(assay(rld))
+
+```
+
+```{r}
+sampleDists <- dist(t(assay(vsd)))
+sampleDistMatrix <- as.matrix(sampleDists)
+colnames(sampleDistMatrix) <- NULL
+colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
+p <- Heatmap(sampleDistMatrix,
+         clustering_distance_rows=sampleDists,
+         clustering_distance_columns=sampleDists,
+         col=colors, row_names_gp = gpar(fontsize = 6))
+
+cor_mat <- cor(assay(vsd))
+colors <- colorRampPalette(brewer.pal(9, "Reds"))(255)
+colnames(cor_mat) <- NULL
+p2 <- Heatmap(cor_mat,
+         clustering_distance_rows="canberra",
+         clustering_distance_columns="canberra",
+         col=colors, row_names_gp = gpar(fontsize = 6))
+
+
+p
+p2
+
+# pdf(here(glue("plots/", de_condition, "_similarity_heatmaps.pdf")), height = 12, width = 14)
+# p
+# p2
+# dev.off()
+```
+
+
+```{r}
+
+#on 500 high-variance genes
+sampleDists <- dist(t(assay(vsd[rownames(var_genes),])))
+sampleDistMatrix <- as.matrix(sampleDists)
+colnames(sampleDistMatrix) <- NULL
+colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
+p <- Heatmap(sampleDistMatrix,
+         clustering_distance_rows=sampleDists,
+         clustering_distance_columns=sampleDists,
+         col=colors, row_names_gp = gpar(fontsize = 6))
+
+cor_mat <- cor(assay(vsd[rownames(var_genes),]))
+colors <- colorRampPalette(brewer.pal(9, "Reds"))(255)
+colnames(cor_mat) <- NULL
+p2 <- Heatmap(cor_mat,
+         clustering_distance_rows="canberra",
+         clustering_distance_columns="canberra",
+         col=colors, row_names_gp = gpar(fontsize = 6))
+
+
+p
+p2
+
+# pdf(here(glue("plots/", de_condition, "_similarity_heatmaps.pdf")), height = 12, width = 14)
+# p
+# p2
+# dev.off()
+```
+```{r}
+
+#on 1043 age DE genes comparing P30 to 17mo
+res_age_17mo %>% as.data.frame() %>% filter(padj < 0.05) %>% dim
+age_de_genes <- res_age_17mo %>% as.data.frame() %>% filter(padj < 0.05) %>% rownames() 
+
+
+sampleDists <- dist(t(assay(vsd[age_de_genes,])))
+sampleDistMatrix <- as.matrix(sampleDists)
+colnames(sampleDistMatrix) <- NULL
+colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
+p <- Heatmap(sampleDistMatrix,
+         clustering_distance_rows=sampleDists,
+         clustering_distance_columns=sampleDists,
+         col=colors, row_names_gp = gpar(fontsize = 6))
+
+cor_mat <- cor(assay(vsd[age_de_genes,]))
+colors <- colorRampPalette(brewer.pal(9, "Reds"))(255)
+colnames(cor_mat) <- NULL
+p2 <- Heatmap(cor_mat,
+         clustering_distance_rows="canberra",
+         clustering_distance_columns="canberra",
+         col=colors, row_names_gp = gpar(fontsize = 6))
+
+
+p
+p2
+
+# pdf(here(glue("plots/", de_condition, "_similarity_heatmaps.pdf")), height = 12, width = 14)
+# p
+# p2
+# dev.off()
+```
+
+```{r}
+# pcaData <- plotPCA(vsd, intgroup=c("age", "sex", "rep", "cell", "sizeFactor","library_RIN"), returnData = T)
+# percentVar <- round(100 * attr(pcaData, "percentVar"))
+# 
+# 
+# features <- c("age", "sex", "rep", "cell", "sizeFactor")
+# map(features, function(feat){
+# ggplot(pcaData, aes_string("PC1", "PC2", color=feat)) +
+#   geom_point(size=3) +
+#   xlab(paste0("PC1: ",percentVar[1],"% variance")) +
+#   ylab(paste0("PC2: ",percentVar[2],"% variance")) + 
+#   coord_fixed()
+# })
+
+
+vsd_sub <- vsd
+
+pcaData <- prcomp(t(assay(vsd_sub)), center = T, scale = F)
+var_df <- data.frame(stdev = pcaData$sdev) %>% mutate(var = stdev^2, percent_var = round(var/sum(var), 3)*100)
+pca_loadings <- pcaData$rotation %>% as.data.frame() %>%
+  rownames_to_column(var = "ensembl_gene_id_trimmed") %>% 
+  left_join(., gene_ids[,c("ensembl_gene_id_trimmed","external_gene_name")]) %>%
+  relocate(external_gene_name)
+
+assertthat::assert_that(all(rownames(pcaData) == rownames(colData(vsd_sub))))
+pca_sample_weights <- cbind(pcaData$x, colData(vsd_sub)) %>% as.data.frame()
+
+features <- c("age", "sex", "rep", "cell", "sizeFactor","library_RIN")
+map(features, function(feat){
+ggplot(pca_sample_weights, aes_string("PC1", "PC2", color=feat)) +
+  geom_point(size=3) +
+  xlab(paste0("PC1: ",var_df[,"percent_var"][1],"% variance")) +
+  ylab(paste0("PC2: ",var_df[,"percent_var"][2],"% variance")) + 
+  coord_fixed()
+})
+
+
+#PC1 separates out great from good samples based on RIN. But without those two outliers, the correlation is not as strong so there must be other important variability captured in PC1
+ggplot(pca_sample_weights, aes(x = PC1, y= library_RIN, color = age, shape = sex)) + geom_point()
+# ggplot(pcaData, aes(PC1, PC2, color=condition, shape = batch)) +
+#   geom_point(size=3) +
+#   xlab(paste0("PC1: ",percentVar[1],"% variance")) +
+#   ylab(paste0("PC2: ",percentVar[2],"% variance")) + 
+#   coord_fixed()
+
+```
+
+```{r}
+cat_features <- c("age","sex","rep")
+library(caret)
+feature_correlations <- map_df(cat_features, function(feat){
+  sub <- pca_sample_weights %>% dplyr::select(starts_with("PC"), all_of(feat))
+  sub[,feat] <- factor(sub[,feat])
+  dummy <- dummyVars(" ~.", data = sub)
+  final_df <- data.frame(predict(dummy, newdata = sub))
+  variables <- colnames(final_df)[!startsWith(colnames(final_df),"PC")]
+  
+  cor_df <- cor(final_df)
+  ComplexHeatmap::Heatmap(cor_df)
+  
+  as.data.frame(cor_df[variables,startsWith(colnames(cor_df), "PC")])
+})
+
+cont_features <- c("library_RIN","sizeFactor")
+feature_correlations_cont <- map_df(cont_features, function(feat){
+  sub <-  pca_sample_weights %>% dplyr::select(starts_with("PC"), all_of(feat))
+
+  
+  cor_df <- cor(sub)
+  variables <- colnames(cor_df)[!startsWith(colnames(cor_df),"PC")]
+
+  ComplexHeatmap::Heatmap(cor_df)
+  
+  as.data.frame(cor_df[variables,startsWith(colnames(cor_df), "PC"), drop = F])
+})
+
+all_feat_cor_mat <- as.matrix(rbind(feature_correlations, feature_correlations_cont))
+  ComplexHeatmap::Heatmap(all_feat_cor_mat)
+
+```
+
+Differential expression on relevant conditions
+```{r}
+test_names <- resultsNames(dds)[-c(1)]
+gene_ids <- geneid2name %>% rownames_to_column(var = "ensemblgene_id") %>% dplyr::select(-c("ensembl_gene_id_version"))
+
+if(!dir.exists(here("results/diff_exp/"))) dir.create(here("results/diff_exp/"))
+map(test_names, function(name){
+  comp_res <- results(dds,name = name) %>%
+    as.data.frame() %>%
+    rownames_to_column(var = "ensemblgene_id") %>%
+    left_join(., gene_ids, by= "ensemblgene_id") %>%
+    relocate(external_gene_name) %>%
+    arrange(desc(log2FoldChange))
+  
+  write.csv(comp_res, paste0(here("results/diff_exp/"), name,".csv"))
+})
+
+
+```
+
+
+```{r}
+saveRDS(dds, here("data/bulkrna_dds.rds"))
+```
+
+

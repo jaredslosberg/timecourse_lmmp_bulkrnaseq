@@ -1,0 +1,341 @@
+---
+title: "go_enrichment"
+author: "Jared Slosberg"
+date: "4/24/2023"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(clusterProfiler)
+library(dplyr)
+library(org.Mm.eg.db)
+library(DOSE)
+library(ggplot2)
+library(grid)
+library(gridExtra)
+library(here)
+library(tidyverse)
+library(biomaRt)
+library(RColorBrewer)
+library(DESeq2)
+```
+
+```{r}
+dds <- readRDS(here("data/bulkrna_dds.rds"))
+```
+
+
+```{r}
+dot_plot <- function(ontology_res, n_terms = 15, style = "enrichplot"){
+  or <- as.data.frame(ontology_res) 
+  or$generatio_num <- sapply(or$GeneRatio, function(x){eval(parse(text = x))})
+  
+  or_filt <- or %>% slice_min(n = n_terms,order_by = p.adjust, by = ONTOLOGY, with_ties = F)
+  ggplot(or_filt, aes(x = generatio_num, y = Description, fill = p.adjust, color = (p.adjust < 0.05))) +
+    geom_point(shape = 21) +
+    scale_fill_gradientn(colors = c("red","blue")) +
+    scale_color_manual(values = c("white","black"))
+}
+
+dot_plot_gsea <- function(ontology_res, n_terms = 15, style = "enrichplot"){
+  or <- as.data.frame(ontology_res) 
+
+  or_filt <- or %>% slice_min(n = n_terms,order_by = p.adjust, by = ONTOLOGY, with_ties = F)
+  ggplot(or_filt, aes(x = enrichmentScore, y = Description, fill = p.adjust, color = (p.adjust < 0.05))) +
+    geom_point(shape = 21) +
+    scale_fill_gradientn(colors = c("red","blue")) +
+    scale_color_manual(values = c("white","black"))
+}
+```
+
+## Overenrichment analysis (ORA) on cluster modules
+
+```{r}
+cluster_df <- read.csv(here("results/dynamic_gene_modules.csv"))
+cluster_info  <- read.csv(here("results/dynamic_gene_modules_info.csv"))
+
+```
+
+```{r}
+clusters <- cluster_df %>% pull(sph_cluster) %>% unique %>% sort()
+
+if(!dir.exists(here("plots/diff_exp/module_GO/"))) dir.create(here("plots/diff_exp/module_GO/"))
+if(!dir.exists(here("results/diff_exp/module_GO/"))) dir.create(here("results/diff_exp/module_GO/"))
+
+#loop here
+meta_go_df <- map_df(clusters, function(cl){
+  genes <- cluster_df %>% filter(sph_cluster == cl) %>% pull(ensemblgene_id)
+  
+  
+  ora_res <- enrichGO(gene = genes, keyType = "ENSEMBL", universe = rownames(dds),
+                      OrgDb = "org.Mm.eg.db",
+                      ont = "ALL",
+                      pvalueCutoff = 1,
+                      qvalueCutoff = 1,
+                      readable = F)
+  
+  ora_res_df <- as.data.frame(ora_res)
+  
+  pdf(here(paste0("plots/diff_exp/module_GO/gene_module_",cl,".pdf")), width = 15)
+  pl <- dot_plot(ora_res, n_terms=15) + facet_grid(ONTOLOGY~., scales = "free")  +
+    ggtitle(paste0("Subset of GO enriched terms for cluster ", cl)) 
+  
+  print(pl)
+  
+  summary <- as.data.frame(ora_res) %>%
+    dplyr::filter(ONTOLOGY == "BP") %>%
+    dplyr::select(ONTOLOGY, Description, p.adjust, qvalue, geneID)
+  
+  sub1 <- summary[1:55,]
+  sub2 <- summary[56:110,]
+  grid.newpage()
+  g1 <- gridExtra::grid.table(sub1,theme=ttheme_minimal(base_size = 8))
+  grid.newpage()
+  g2 <- gridExtra::grid.table(sub2,theme=ttheme_minimal(base_size = 8))
+  
+  dev.off()
+  
+  write.csv(ora_res_df, file = here(paste0("results/diff_exp/module_GO/gene_module_",cl,".csv")))
+  
+  summary <- summary %>% mutate(module = cl)
+  return(summary)
+})
+```
+
+```{r}
+meta_go_df 
+```
+
+```{r}
+#load all DE genes, rank by x
+testnames <- c("age_6mo_vs_P30","age_17mo_vs_P30")
+
+de_res <- map(testnames, function(comp){
+  res <- read.csv(here(paste0("results/diff_exp/",comp,".csv")))
+}) %>% setNames(testnames)
+
+```
+
+```{r}
+  library(colorspace)
+
+
+if(!dir.exists(here("results/diff_exp/de_gsea/"))) dir.create(here("results/diff_exp/de_gsea/"))
+if(!dir.exists(here("plots/diff_exp/de_gsea/"))) dir.create(here("plots/diff_exp/de_gsea/"))
+
+gsea_results <- map(testnames, function(comp){
+
+  print(comp)
+
+  #de_res <- read.csv(here(paste0("results/diff_exp/",comp,".csv")))
+  #de_genes <- de_res %>% filter(padj < 0.05) %>% dplyr::select(external_gene_name, ensemblgene_id)
+  
+  #all genes (for gsea)
+  res_shrink <- lfcShrink(dds, coef = comp, type="apeglm")
+
+  #genes <- de_res[[comp]][,c("gene_id_trimmed","estimate")] %>% deframe() %>% sort(., decreasing = T)
+  genes <- res_shrink %>% as.data.frame() %>%
+    dplyr::select(log2FoldChange) %>% 
+    arrange(desc(log2FoldChange)) %>% 
+    rownames_to_column(var = "ensemblgene_id") %>%
+    deframe()
+  
+  print("Gene ranks prepped... Running GSEA")
+  #gene set enrichment analysis
+  res <- gseGO(geneList     = genes,
+                OrgDb        = org.Mm.eg.db,
+                ont          = "ALL",
+                keyType      = "ENSEMBL",
+                minGSSize    = 10,
+                maxGSSize    = 500,
+                pvalueCutoff = 1,
+                verbose      = TRUE)
+
+  res %>% as.data.frame %>% group_by(ONTOLOGY) %>%
+    filter(p.adjust < 0.05) %>%
+    add_count(name = "n_significant") %>% 
+    dplyr::select(ONTOLOGY, n_significant) %>%
+    unique()
+  res_read <- setReadable(res, 'org.Mm.eg.db')
+
+  
+  pdf(here(paste0("plots/diff_exp/de_gsea/", comp, ".pdf")), width = 20, height = 20)
+  print(dot_plot_gsea(res, n_terms=15) + facet_grid(ONTOLOGY~., scales = "free")  +
+    ggtitle(paste0("Subset of GO enriched terms for ", comp)))
+
+  p1 <- cnetplot(res_read, foldChange=genes, showCategory = 10)
+  p2 <- heatplot((res_read), foldChange = genes) +
+    scale_fill_continuous_divergingx(palette = 'RdBu', mid = 0, rev = T)
+  res_pw <- enrichplot::pairwise_termsim(res)
+  p3 <- emapplot(res_pw)
+  p4 <- enrichplot::upsetplot(res)
+  
+  print(p1)
+  print(p2)
+  print(p3)
+  print(p4)
+
+dev.off()
+
+  summary <- as.data.frame(res) %>%
+    dplyr::filter(ONTOLOGY == "BP") %>%
+    dplyr::select(ONTOLOGY, Description, p.adjust, qvalues, setSize)
+
+  colnames(summary)[colnames(summary) == "Description"] <- paste0("Description - GO Terms for ", comp)
+
+
+  sub1 <- summary[1:55,]
+  sub2 <- summary[56:110,]
+  grid.newpage()
+  g1 <- gridExtra::grid.table(sub1,theme=ttheme_minimal(base_size = 8))
+  grid.newpage()
+  print("test")
+  g2 <- gridExtra::grid.table(sub2,theme=ttheme_minimal(base_size = 8))
+
+
+  dev.off()
+
+  write.csv(x = as.data.frame(res), here(paste0("results/diff_exp/de_gsea/",comp,".csv")))
+  return(res)
+})
+
+```
+
+
+```{r, eval = F}
+geneset <- read_tsv(here("data/custom_genesets/ukbb_zscores.fdr_0.5.gs"))
+
+#biomaRt - get 
+ensembl <- useMart("ensembl", host = "http://jul2019.archive.ensembl.org/") #mm 97
+datasets <- listDatasets(ensembl)
+ensembl <- useDataset("hsapiens_gene_ensembl",mart=ensembl)
+
+gene_description <- getBM(attributes = c("hgnc_symbol", "entrezgene_id", "chromosome_name"),
+                          filters = "external_gene_name", values = gene_weights$external_gene_name,  mart = ensembl) %>% 
+  filter(chromosome_name %in% c(1:23))
+
+#The same entrez id can (~70 times) have two ens gene ids, duplicates are a pain and the info is mostly the same, just small differences in TSS/TES. remove dups
+# gene_description <- gene_description[!duplicated(gene_description$external_gene_name),] %>%
+#   mutate(entrezgene_id = as.character(entrezgene_id))
+
+pheno_gene_list <- map(traits, function(trt){
+  
+  df <- geneset[geneset$TRAIT == trt,"GENESET"] %>%
+    str_split(., "\\,") %>%
+    as.data.frame() 
+  
+  colnames(df) <- "merged"
+  
+  split <- df %>% separate(merged, c("hgnc_symbol", "Z"), sep = ":", remove=T) %>% 
+    left_join(., gene_description[,c("hgnc_symbol", "entrezgene_id")])
+  
+  return(split)
+}) %>% setNames(traits)
+
+#over-representation analysis
+gsea_results <- map(traits, function(trt){
+  
+  print(trt)
+  
+  #top n genes (for over representation analysis)
+  genes <- pheno_gene_list[[trt]] %>% pull(entrezgene_id)
+  
+  # #all genes (for gsea)
+  # genes <- gene_weights[,c("external_gene_name",trt)] %>% deframe() %>% sort(., decreasing = T)
+  
+  print("Gene ranks prepped... Running GSEA")
+  #over represenation analysis
+  res <- enrichKEGG(gene     = genes,
+                    organism        = "hsa",
+                    keyType      = "kegg",
+                    minGSSize    = 1,
+                    maxGSSize    = 500000,
+                    pAdjustMethod = "none",
+                    pvalueCutoff = 1,
+                    qvalueCutoff = 1)
+  
+  
+  summary <- as.data.frame(res)
+  
+  min_entry <- 10
+  sum_filt <- summary %>% filter(qvalue < 0.2) %>% arrange(desc(qvalue)) %>% mutate(Description = factor(Description, levels = Description))
+  sum_safely <- summary  %>% slice_min(., qvalue, n = min_entry, with_ties = F) %>% arrange(desc(qvalue)) %>% mutate(Description = factor(Description, levels = Description))
+  
+  if(nrow(sum_filt) < min_entry) sum_filt <- sum_safely
+    
+  
+  cols <- rev(brewer.pal(9, "YlOrRd"))
+  pal <- colorRampPalette(cols)
+  
+  pl <- ggplot(sum_filt) + geom_bar(stat = "identity", aes( x = Count, y= Description, fill = qvalue, color = qvalue < 0.05)) +
+      ggtitle(paste0("Subset of KEGG enriched terms for ", trt), subtitle = paste0("over-enrichment analysis on ",length(genes), " genes")) +
+    scale_fill_gradientn(colors = pal(10000), limits = c(0,1)) + 
+    scale_color_manual(values = c("FALSE" = "white", "TRUE" = "black"))
+  
+  pdf(here(paste0("plots/geneSetEnrichmentAnalysis/kegg_ora_", trt, ".pdf")), width = 20, height = 20)
+  print(pl)
+  dev.off()
+  
+  
+  
+  return(res)
+})
+
+
+gsea_results <- map(traits, function(trt){
+  
+  print(trt)
+  
+  #top n genes (for over representation analysis)
+  # genes <- pheno_gene_list[[trt]] %>% deframe()
+  
+  #top n genes (for over representation analysis)
+  genes <- pheno_gene_list[[trt]] %>% pull(hgnc_symbol)
+  
+  print("Gene ranks prepped... Running GSEA")
+  #gene set enrichment analysis
+  res <- enrichGO(gene     = genes,
+               OrgDb        = org.Hs.eg.db,
+               ont          = "BP",
+               keyType      = "SYMBOL",
+               minGSSize    = 1,
+               maxGSSize    = 5000,
+               pvalueCutoff = 1,
+               qvalueCutoff = 1)
+  
+  
+  pdf(here(paste0("plots/geneSetEnrichmentAnalysis/", trt, ".pdf")), width = 20, height = 20)
+  print(enrichplot::dotplot(res, showCategory=15, split="ONTOLOGY") + facet_grid(ONTOLOGY~., scales = "free")  +
+          ggtitle(paste0("Subset of GO enriched terms for ", trt)))
+  
+  summary <- as.data.frame(res) %>%
+    dplyr::filter(ONTOLOGY == "BP") %>%
+    dplyr::select(ONTOLOGY, Description, p.adjust, qvalues, setSize)
+  
+  colnames(summary)[colnames(summary) == "Description"] <- paste0("Description - GO Terms for ", trt)
+  
+  
+  sub1 <- summary[1:55,]
+  sub2 <- summary[56:110,]
+  grid.newpage()
+  g1 <- gridExtra::grid.table(sub1,theme=ttheme_minimal(base_size = 8))
+  grid.newpage()
+  print("test")
+  g2 <- gridExtra::grid.table(sub2,theme=ttheme_minimal(base_size = 8))
+  
+  
+  dev.off()
+  
+  return(res)
+})
+
+
+
+
+
+```
+

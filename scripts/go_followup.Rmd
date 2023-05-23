@@ -1,0 +1,224 @@
+---
+title: "go_followup.Rmd"
+author: "Jared Slosberg"
+date: "5/1/2023"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(DESeq2)
+library(here)
+library(tidyverse)
+library(biomaRt)
+library(grid)
+library(ComplexHeatmap)
+```
+
+```{r}
+goHeatmap <- function(mart, geneOntID, heatmap_path_dir = NULL){
+  
+  gene.data <- getBM(attributes=c('mgi_symbol', 'ensembl_gene_id', 'go_id', "name_1006"),
+                     filters = 'go', values = geneont_id , mart = mart) %>% filter(go_id == geneOntID) %>%
+    mutate(go_description = name_1006) %>%
+    dplyr::select(-name_1006)
+  
+  geneont_description <- gene.data$go_description %>% unique
+  
+  genes_ens <- pull(gene.data, ensembl_gene_id)
+  genes_sn <- pull(gene.data, mgi_symbol)
+  
+  genes_ens_filter <- genes_ens[genes_ens %in% rownames(dds)]
+  genes_sn_filter <- gene.data %>% filter(ensembl_gene_id %in% genes_ens_filter) %>% pull(mgi_symbol)
+  
+  
+  de_sn <- gene.data %>% filter(ensembl_gene_id %in% de_genes) %>% pull(mgi_symbol)
+  de_ens  <- gene.data %>% filter(ensembl_gene_id %in% de_genes) %>% pull(ensembl_gene_id)
+  
+  ntd_sub <- ntd[genes_ens_filter,]
+  rownames(ntd_sub) <- genes_sn_filter
+  
+  
+  ntd_average <- ntd_sub %>% as.data.frame() %>% transmute(
+    mn_P30_M = rowMeans(dplyr::select(., starts_with("P30-M"))),
+    mm_6mo_M = rowMeans(dplyr::select(., starts_with("6mo-M"))),
+    mn_17mo_M = rowMeans(dplyr::select(., starts_with("17mo-M"))),
+    mn_P30_F = rowMeans(dplyr::select(., starts_with("P30-F"))),
+    mn_6mo_F = rowMeans(dplyr::select(., starts_with("6mo-F"))),
+    mn_17mo_F = rowMeans(dplyr::select(., starts_with("17mo-F"))))
+  
+  scaled_expression <- t(scale(t(ntd_sub)))
+  scaled_average_expression <- t(scale(t(ntd_average)))
+  
+  de_scaled_expression <- scaled_expression[de_sn,,drop = F]
+  de_scaled_average_expression <- scaled_average_expression[de_sn,,drop = F]
+  
+  col_split <- rep(c("P30","6mo","17mo"), 2)
+  
+  #all GO genes
+  n_genes <- nrow(scaled_average_expression)
+  space <- 4.4 #vertical space of heatmap on 6x6 inch PDF
+  space_per_gene <- space/n_genes
+  point_per_inch <- 72
+  point_per_gene <- space_per_gene * point_per_inch
+  point_per_gene <- min(8, point_per_gene)
+  p1 <- ComplexHeatmap::Heatmap(scaled_average_expression,
+                          name = "expression z-score",
+                          column_split = col_split,
+                          cluster_columns = T,
+                          row_names_gp = gpar(fontsize = point_per_gene),
+                          show_row_names = T)
+  
+  p2 <- ComplexHeatmap::Heatmap(de_scaled_average_expression,
+                          name = "expression z-score",
+                          column_split = col_split,
+                          cluster_columns = T,
+                          show_row_names = T,
+                          column_title = paste(geneOntID, geneont_description, sep = " -- "))
+  
+  if(!is.null(heatmap_path_dir)){
+    
+    geneOntID_correct <- geneOntID %>% str_replace(.,":","_")
+    geneont_description_correct <- geneont_description %>% str_replace_all(., " ", "_")
+    heatmap_path <- paste0(heatmap_path_dir, geneOntID_correct, "_", geneont_description_correct, ".pdf")
+    pdf(heatmap_path)
+      print(p1)
+      print(p2)
+    dev.off()
+  }else{
+    print(p1)
+    print(p2)
+  }
+
+}
+```
+
+
+```{r}
+dds <- readRDS(here("data/bulkrna_dds.rds"))
+
+ntd <- DESeq2::normTransform(dds) %>% assay()
+
+cluster_df <- read.csv(here("results/dynamic_gene_modules.csv")) %>% mutate(ensembl_gene_id = ensemblgene_id)
+de_genes <- cluster_df %>% pull(ensemblgene_id)
+```
+
+```{r}
+ensembl <- useMart("ensembl", host = "useast.ensembl.org")
+datasets <- listDatasets(ensembl)
+ensembl <- useDataset("mmusculus_gene_ensembl",mart=ensembl)
+
+```
+
+```{r}
+n_cluster <- 6
+clusters <- 1:n_cluster
+
+go_results <- map(clusters, function(x){
+  read.csv(here(paste0("results/diff_exp/module_GO/gene_module_", x,".csv")))
+
+})
+```
+
+How many terms are significant for each module?
+```{r}
+map_df(clusters, function(module){
+  res<- go_results[[module]]
+  res %>% group_by(ONTOLOGY) %>% filter(p.adjust < 0.05) %>% summarise(n_significant_terms = n(), module = module) %>% relocate(module)
+})
+
+bp_significant_terms <- map(clusters, function(module){
+  res<- go_results[[module]]
+  res %>% filter(ONTOLOGY == "BP") %>% filter(p.adjust < 0.05) 
+})
+```
+
+```{r}
+library(biomaRt)
+ensembl = useMart("ensembl",dataset="mmusculus_gene_ensembl") #uses mouse ensembl annotations
+#gets gene symbol, transcript_id and go_id for all genes annotated with GO:0007507
+#for some reason, name_1006 is the attribute that returns the GO description
+
+if(!dir.exists(here("plots/diff_exp/module_GO/gene_level_expression/"))) dir.create(here("plots/diff_exp/module_GO/gene_level_expression/"))
+map(clusters, function(x){ dir.create(here(paste0("plots/diff_exp/module_GO/gene_level_expression/module_", x)))})
+
+
+map(clusters, function(module){
+  go_res <- bp_significant_terms[[module]]
+  map(go_res$ID, function(go_id){
+    print(go_id)
+    goHeatmap(ensembl, go_id, heatmap_path_dir = here(paste0("plots/diff_exp/module_GO/gene_level_expression/", "module_", module,"/")))
+
+  })
+})
+geneont_id <- 'GO:0060291'
+
+
+```
+```{r}
+gene.data <- getBM(attributes=c('external_gene_name', 'ensembl_gene_id'),
+                     filters = 'ensembl_gene_id', values = rownames(dds) , mart = ensembl)
+
+bbb_genes <- c("Agrn" = "ENSMUSG00000041936")
+collagen_genes <- gene.data %>% filter(str_detect(external_gene_name, pattern = "^Col[0-9]")) %>% deframe()
+macrophage_pol_genes <- gene.data %>% filter(external_gene_name %in% c("Cd163","Arg1")) %>% deframe()
+inflammatory_genes <- gene.data %>% filter(external_gene_name %in% c("Il10","Il1b","TNFA","Mcp1")) %>% deframe()
+mmp_genes <- gene.data %>% filter(str_detect(external_gene_name, pattern = "^Mmp")) %>% deframe()
+
+
+plotHeatmap <- function(count_mat, genes){
+  ntd_sub <- count_mat[genes,,drop = F]
+  rownames(ntd_sub) <- names(genes)
+    
+    
+  ntd_average <- ntd_sub %>% as.data.frame() %>% transmute(
+      mn_P30_M = rowMeans(dplyr::select(., starts_with("P30-M"))),
+      mm_6mo_M = rowMeans(dplyr::select(., starts_with("6mo-M"))),
+      mn_17mo_M = rowMeans(dplyr::select(., starts_with("17mo-M"))),
+      mn_P30_F = rowMeans(dplyr::select(., starts_with("P30-F"))),
+      mn_6mo_F = rowMeans(dplyr::select(., starts_with("6mo-F"))),
+      mn_17mo_F = rowMeans(dplyr::select(., starts_with("17mo-F"))))
+    
+  scaled_average_expression <- t(scale(t(ntd_average)))
+  col_split <- rep(c("P30","6mo","17mo"), 2)%>% factor(levels = c("P30","6mo","17mo"))
+  
+  #get de annotation
+  genes_cl <- genes %>% enframe(name = "gene_short_name", value = "ensembl_gene_id") %>%
+    filter(ensembl_gene_id %in% genes) %>%
+    left_join(., cluster_df) %>%
+    dplyr::select(ensembl_gene_id, sph_cluster) %>% 
+    mutate(sph_cluster = factor(sph_cluster, levels = c(1:7))) %>%
+    deframe() %>% droplevels()
+  
+  clusters_used <- genes_cl %>% unname() %>% unique %>% droplevels() %>% levels
+  cols <- scales::hue_pal()(7) %>% setNames(1:7) %>% .[clusters_used] 
+  ha = HeatmapAnnotation(module = genes_cl, col = list(module = cols),  which = "row")
+  
+  p1 <- ComplexHeatmap::Heatmap(scaled_average_expression,
+                            name = "expression z-score",
+                            right_annotation = ha,
+                            column_split = col_split,
+                            cluster_columns = F,
+                            row_names_gp = gpar(fontsize = 12),
+                            show_row_names = T)
+
+}
+
+pl1 <- plotHeatmap(ntd, mmp_genes)
+pl2 <- plotHeatmap(ntd, collagen_genes)
+
+pdf(here("plots/diff_exp/geneset_heatmaps/mmp_genes.pdf"))
+pl1 
+dev.off()
+
+pdf(here("plots/diff_exp/geneset_heatmaps/collagen_genes.pdf"))
+pl2
+dev.off()
+
+d <- plotCounts(dds, gene="ENSMUSG00000047562", intgroup=c("age","sex"),returnData=TRUE)
+ggplot(d, aes(x = age, y = count, color = sex)) + geom_boxplot()
+```
+

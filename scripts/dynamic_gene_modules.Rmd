@@ -1,0 +1,460 @@
+---
+title: "Identify groups of DE genes with similar dynamics"
+output: html_document
+---
+
+
+```{r, include= F}
+library(tidyverse)
+library(glue)
+library(DESeq2)
+library(here)
+library(tximport)
+library(RColorBrewer)
+library(vsn)
+library(ComplexHeatmap)
+library(biomaRt)
+```
+
+Read in experimental metadata
+```{r}
+data_dir <- here("kallisto_out_merged/")
+metadata_path <- here("metadata_merged_filtered.csv")
+list.files(data_dir)
+
+
+exp_metadata <- read.csv(metadata_path, header = T)
+
+# named_runs <- exp_metadata %>% deframe
+```
+
+
+
+Differential expression on relevant conditions
+```{r}
+dds <- readRDS(here("data/bulkrna_dds.rds"))
+
+test_names <- paste0("age_",c("6mo","17mo"),"_vs_P30")
+
+res_list <- map(test_names, function(name){
+  tbl <- read.csv(paste0(here("results/diff_exp/"), name,".csv"), row.names = 1)
+})
+
+clip_nlog10p <- 10
+sigthresh_nlog10p <- -log10(.05)
+res_df <- map_df(test_names, function(name){
+  tbl <- read.csv(paste0(here("results/diff_exp/"), name,".csv"), row.names = 1)
+  tbl <- tbl %>% mutate(condition = name,
+                        nlog10p = ifelse(-log10(padj) > clip_nlog10p, clip_nlog10p, -log10(padj)),
+                        nlog10p_clipped = ifelse(-log10(padj) > clip_nlog10p, T, F ))
+  return(tbl)
+})
+
+
+```
+
+
+
+Get biomart annotations for gene short names
+```{r}
+library(biomaRt)
+#get gene names, make sure to use the right ensembl archive for genome used for alignment
+#listMarts() 
+ensembl <- useMart("ensembl")
+datasets <- listDatasets(ensembl)
+ensembl <- useDataset("mmusculus_gene_ensembl",mart=ensembl)
+
+gene_id_trimmed <- rownames(dds)
+gene_description <- getBM(attributes = c("ensembl_gene_id_version","external_gene_name","description","chromosome_name"),
+                   filters = "ensembl_gene_id", values =gene_id_trimmed,  mart = ensembl)
+
+geneid2name <- gene_description[,c("ensembl_gene_id_version", "external_gene_name")] %>% 
+  mutate(ensembl_gene_id_trimmed = str_split_fixed(ensembl_gene_id_version, "\\.", 2) %>% .[,1])
+
+gene_ids <- geneid2name %>% mutate(ensemblgene_id = ensembl_gene_id_version)
+```
+
+```{r}
+pcut <- 0.05
+#all genes that are DE in either condition
+diff_genes <-res_df %>% filter(padj < pcut) %>% pull(ensemblgene_id) %>% unique()
+
+res_df_filtered <- res_df %>% filter(ensemblgene_id %in% diff_genes)
+res_df_filtered_wide <- res_df_filtered  %>%
+  dplyr::select(c(ensemblgene_id, padj, nlog10p, condition, log2FoldChange)) %>%
+  pivot_wider(names_from = condition, values_from = c(padj, log2FoldChange, nlog10p)) %>% 
+  mutate(both_sig = padj_age_6mo_vs_P30 < pcut & padj_age_17mo_vs_P30<pcut,
+         doe_17mo_vs_P30 = sign(log2FoldChange_age_17mo_vs_P30),
+         doe_6mo_vs_P30 = sign(log2FoldChange_age_6mo_vs_P30),
+         direction_consistent = (doe_17mo_vs_P30 == doe_6mo_vs_P30),
+         direction = ifelse(direction_consistent, sign(log2FoldChange_age_6mo_vs_P30), paste(doe_6mo_vs_P30,doe_17mo_vs_P30, sep = ","))) 
+
+#for genes significant for both timepoints, what are the direction of effects?
+res_df_filtered_wide %>% filter(both_sig == T) %>% pull(direction) %>% table
+
+#for genes significant for at least one timepoint, what are the direction of effects (over both timepoints)?
+res_df_filtered_wide %>% pull(direction) %>% table
+
+genes_down <- res_df_filtered_wide %>% filter(both_sig == T, direction == -1) %>% pull(ensemblgene_id) 
+genes_up <- res_df_filtered_wide %>% filter(both_sig == T, direction == 1) %>% pull(ensemblgene_id) 
+
+```
+
+```{r}
+
+
+ggplot(res_df_filtered_wide,aes(x = nlog10p_age_6mo_vs_P30, y=nlog10p_age_17mo_vs_P30 )) + geom_point(size = I(0.01))+ xlab("6mo vs P30 nlog10p") + ylab("17mo vs P30 nlog10p") + geom_hline(yintercept = sigthresh_nlog10p, linetype = "dashed", color = "red")+ geom_vline(xintercept = sigthresh_nlog10p, linetype = "dashed", color = "Red")
+
+ggplot(res_df_filtered_wide,aes(x = log2FoldChange_age_6mo_vs_P30, y=log2FoldChange_age_17mo_vs_P30, color = interaction(both_sig,direction, sep = ":" ))) + geom_point(size = I(0.01))+ xlab("6mo vs P30 log2FC") + ylab("17mo vs P30 log2FC") + ggtitle("Subset of genes for which at least one condition is signficantly DE")+ guides(colour = guide_legend(override.aes = list(size=5)))
+# 
+# diff_genes_df <- res_df %>% group_by(condition) %>% mutate(sig = padj < pcut, lfc_direction = ifelse(log2FoldChange > 0, "up", "down")) %>% filter(ensemblgene_id %in% diff_genes) 
+
+```
+```{r}
+genes_both_sig <- res_df_filtered_wide %>% filter(both_sig == T) %>% pull(ensemblgene_id)
+#diff_genes has genes that are DE in at least one timepoint
+
+#clustering on LFC
+#on diff genes
+ log2fc_mat <- res_df_filtered_wide %>% dplyr::select(ensemblgene_id, log2FoldChange_age_6mo_vs_P30, log2FoldChange_age_17mo_vs_P30) %>% mutate(log2FoldChange_age_P30_vs_P30 = 0) %>% column_to_rownames(var = "ensemblgene_id") %>% as.matrix()
+
+# clusters <- hclust(dist(log2fc_mat))
+# plot(clusters)
+```
+
+```{r}
+#Detect when genes have 0 variance for at least one timepoint, these LFC are estimates and magnitude dominates
+counts_long <- assay(dds)[diff_genes,] %>% as.data.frame() %>% rownames_to_column(var = "ensemblgene_id") %>%
+  pivot_longer(!ensemblgene_id, names_to = "sample_name", values_to = "count") %>% 
+  separate(sample_name, c("age","sex","batch"), sep = "-", remove = F) 
+
+var_df <- counts_long %>% group_by(age, ensemblgene_id) %>% summarise(gene_var = var(count)) %>% arrange(ensemblgene_id) 
+var_df_wide <- var_df %>% pivot_wider(names_from = age, values_from = gene_var, names_glue = "gene_var.{age}")
+zero_var_genes <- var_df %>% filter(gene_var == 0) %>% pull(ensemblgene_id) %>% unique() 
+
+log2fc_mat_filtered <- log2fc_mat[!(rownames(log2fc_mat) %in% zero_var_genes),]
+log2fc_mat_zerovar <- log2fc_mat[zero_var_genes,]
+
+#Elbow Method for finding the optimal number of clusters
+set.seed(123)
+# Compute and plot wss for k = 2 to k = 15.
+k.max <- 20
+#all genes
+wss <- sapply(1:k.max, 
+              function(k){kmeans(log2fc_mat, k, nstart=50,iter.max = 15 )$tot.withinss})
+plot(1:k.max, wss,
+     type="b", pch = 19, frame = FALSE, 
+     xlab="Number of clusters K",
+     ylab="Total within-clusters sum of squares", main = "all genes")
+
+#filtered genes
+wss <- sapply(1:k.max, 
+              function(k){kmeans(log2fc_mat_filtered, k, nstart=50,iter.max = 15 )$tot.withinss})
+plot(1:k.max, wss,
+     type="b", pch = 19, frame = FALSE, 
+     xlab="Number of clusters K",
+     ylab="Total within-clusters sum of squares", main = "filtered genes")
+
+#zero_var genes
+wss <- sapply(1:k.max, 
+              function(k){kmeans(log2fc_mat_zerovar, k, nstart=50,iter.max = 15 )$tot.withinss})
+plot(1:k.max, wss,
+     type="b", pch = 19, frame = FALSE, 
+     xlab="Number of clusters K",
+     ylab="Total within-clusters sum of squares", main = "zero-var genes")
+```
+
+Clustering on all genes
+```{r}
+set.seed(114)
+nclust <- 14
+cluster.kmeans <- kmeans(log2fc_mat, centers = nclust)
+cluster_df <- cluster.kmeans$cluster %>% enframe(name = "ensemblgene_id", value = "cluster.k.8") %>% add_count(cluster.k.8) %>% mutate(cluster_title = paste0("cluster ",cluster.k.8, " (n=",n,")"))
+
+log2fc_long <- res_df_filtered %>%
+  full_join(cluster_df) %>%
+  mutate(condition = 
+           case_when(condition == "age_6mo_vs_P30" ~ "6mo", condition == "age_17mo_vs_P30" ~ "17mo")) %>%
+  mutate(transparency = 2*sqrt(1/n)) %>%
+  mutate(transparency_corrected = pmin(1, transparency)) %>% 
+  dplyr::select(-c(baseMean, lfcSE, stat, pvalue, padj, nlog10p, nlog10p_clipped))
+
+
+p30_df <- log2fc_long %>% dplyr::select(external_gene_name, ensemblgene_id, cluster.k.8, n, cluster_title, transparency, transparency_corrected) %>% unique %>% mutate("log2FoldChange" = 0, condition = "P30")
+
+log2fc_long <- rbind(log2fc_long, p30_df) %>% mutate(condition = factor(condition, levels = c("P30","6mo","17mo"))) 
+dummy_df <- log2fc_long %>% dplyr::select(-cluster_title)
+
+ggplot(log2fc_long, aes( x = condition, y = log2FoldChange, group = ensemblgene_id, alpha = transparency_corrected)) + geom_line(color = "black") + facet_wrap(~cluster_title, scales = "free_y") + ylab("log2FC estimates relative to P30") 
+
+# ggplot(log2fc_long, aes( x = condition, y = log2FoldChange, group = ensemblgene_id)) + geom_line(data = dummy_df, color = "grey50")  + geom_line() + facet_wrap(~cluster_title) 
+
+```
+
+Is clustering (of extreme LFCs) driven by expression variance at a certain timepoint? (all genes)
+```{r, eval = F}
+counts_long <- assay(dds)[diff_genes,] %>% as.data.frame() %>% rownames_to_column(var = "ensemblgene_id") %>%
+  pivot_longer(!ensemblgene_id, names_to = "sample_name", values_to = "count") %>% 
+  separate(sample_name, c("age","sex","batch"), sep = "-", remove = F) 
+
+var_df <- counts_long %>% group_by(age, ensemblgene_id) %>% summarise(gene_var = var(count)) %>% arrange(ensemblgene_id) 
+var_df_wide <- var_df %>% pivot_wider(names_from = age, values_from = gene_var, names_glue = "gene_var.{age}")
+zero_var_genes <- var_df %>% filter(gene_var == 0) %>% pull(ensemblgene_id) %>% unique() 
+
+log2fc_long <- full_join(log2fc_long, var_df_wide) %>%
+  mutate(zero_var = factor(ifelse(ensemblgene_id %in% zero_var_genes, TRUE, FALSE)))
+
+ggplot(log2fc_long, aes( x = condition, y = log2FoldChange, group = ensemblgene_id, alpha = transparency_corrected, color = gene_var.P30)) + geom_line() + facet_wrap(~cluster_title, scales = "free_y") + ylab("log2FC estimates relative to P30") + scale_color_viridis_c(trans = "log10", na.value = "grey")
+
+ggplot(log2fc_long, aes( x = condition, y = log2FoldChange, group = ensemblgene_id, alpha = transparency_corrected, color = gene_var.6mo)) + geom_line() + facet_wrap(~cluster_title, scales = "free_y") + ylab("log2FC estimates relative to P30") + scale_color_viridis_c(trans = "log10", na.value = "grey")
+
+ggplot(log2fc_long, aes( x = condition, y = log2FoldChange, group = ensemblgene_id, alpha = transparency_corrected, color = gene_var.17mo)) + geom_line() + facet_wrap(~cluster_title, scales = "free_y") + ylab("log2FC estimates relative to P30") + scale_color_viridis_c(trans = "log10", na.value = "grey")
+
+ggplot(log2fc_long, aes( x = condition, y = log2FoldChange, group = ensemblgene_id, alpha = transparency_corrected, color = zero_var)) + geom_line() + facet_wrap(~cluster_title, scales = "free_y") + ylab("log2FC estimates relative to P30") 
+
+set.seed(114)
+log2fc_mat_gene_var <- log2fc_mat %>% as.data.frame() %>%
+  rownames_to_column(var = "ensemblgene_id") %>% 
+  mutate(zero_var = factor(ifelse(ensemblgene_id %in% zero_var_genes, TRUE, FALSE)))
+
+nclust <- 14
+cluster.kmeans <- kmeans(log2fc_mat, centers = nclust)
+cluster_df <- cluster.kmeans$cluster %>% enframe(name = "ensemblgene_id", value = "cluster.k.14.var") %>% add_count(cluster.k.14.var, name = "n.var") %>% mutate(cluster_title.var = paste0("cluster ",cluster.k.14.var, " (n=",n.var,")"))
+
+log2fc_long <- log2fc_long %>%
+  left_join(cluster_df)
+
+ggplot(log2fc_long, aes( x = condition, y = log2FoldChange, group = ensemblgene_id, alpha = transparency_corrected, color = zero_var)) + geom_line() + facet_wrap(~cluster_title, scales = "free_y") + ylab("log2FC estimates relative to P30") + ggtitle("clustering on LFC")
+
+ggplot(log2fc_long, aes( x = condition, y = log2FoldChange, group = ensemblgene_id, alpha = transparency_corrected, color = zero_var)) + geom_line() + facet_wrap(~cluster_title.var, scales = "free_y") + ylab("log2FC estimates relative to P30") + ggtitle("clustering on LFC and binary zero-var indicator")
+
+```
+
+Clustering on scaled zero-var 
+TODO: What drives the magnitude of the LFC estimates with a denom/numer of 0? is it expression magnitude or variance?
+-if these are not important, I can scale the matrix before clustering to get dynamics separately from magnitude
+```{r}
+set.seed(114)
+nclust <- 7
+#either cluster on log2fc matrix or scaled log2fc matrix
+cluster.kmeans <- kmeans(t(scale(t(log2fc_mat_zerovar), center = F, scale = T)), centers = nclust)
+cluster_df <- cluster.kmeans$cluster %>% enframe(name = "ensemblgene_id", value = "cluster.k.8") %>% add_count(cluster.k.8) %>% mutate(cluster_title = paste0("cluster ",cluster.k.8, " (n=",n,")"))
+
+log2fc_long <- res_df_filtered %>%
+  filter(ensemblgene_id %in% zero_var_genes) %>%
+  full_join(cluster_df) %>%
+  mutate(condition = 
+           case_when(condition == "age_6mo_vs_P30" ~ "6mo", condition == "age_17mo_vs_P30" ~ "17mo")) %>%
+  mutate(transparency = sqrt(1/n)) %>%
+  mutate(transparency_corrected = pmin(1, transparency)) %>% 
+  dplyr::select(-c(baseMean, lfcSE, stat, pvalue, padj, nlog10p, nlog10p_clipped))
+
+
+p30_df <- log2fc_long %>% dplyr::select(external_gene_name, ensemblgene_id, cluster.k.8, n, cluster_title, transparency, transparency_corrected) %>% unique %>% mutate("log2FoldChange" = 0, condition = "P30")
+
+log2fc_long <- rbind(log2fc_long, p30_df) %>% mutate(condition = factor(condition, levels = c("P30","6mo","17mo"))) 
+dummy_df <- log2fc_long %>% dplyr::select(-cluster_title)
+
+ggplot(log2fc_long, aes( x = condition, y = log2FoldChange, group = ensemblgene_id, alpha = transparency_corrected)) + geom_line(color = "black") + facet_wrap(~cluster_title, scales = "free_y") + ylab("log2FC estimates relative to P30") 
+
+# ggplot(log2fc_long, aes( x = condition, y = log2FoldChange, group = ensemblgene_id)) + geom_line(data = dummy_df, color = "grey50")  + geom_line() + facet_wrap(~cluster_title) 
+
+```
+
+Clustering on scaled non-zero var genes
+```{r}
+set.seed(114)
+nclust <- 6
+cluster.kmeans <- kmeans(t(scale(t(log2fc_mat_filtered), scale = T, center = F)), centers = nclust)
+cluster_df <- cluster.kmeans$cluster %>% enframe(name = "ensemblgene_id", value = "cluster.k.8") %>% add_count(cluster.k.8) %>% mutate(cluster_title = paste0("cluster ",cluster.k.8, " (n=",n,")"))
+
+log2fc_long <- res_df_filtered %>%
+  filter(!(ensemblgene_id %in% zero_var_genes)) %>%
+  full_join(cluster_df) %>%
+  mutate(condition = 
+           case_when(condition == "age_6mo_vs_P30" ~ "6mo", condition == "age_17mo_vs_P30" ~ "17mo")) %>%
+  mutate(transparency = 2*sqrt(1/n)) %>%
+  mutate(transparency_corrected = pmin(1, transparency)) %>% 
+  dplyr::select(-c(baseMean, lfcSE, stat, pvalue, padj, nlog10p, nlog10p_clipped))
+
+
+p30_df <- log2fc_long %>% dplyr::select(external_gene_name, ensemblgene_id, cluster.k.8, n, cluster_title, transparency, transparency_corrected) %>% unique %>% mutate("log2FoldChange" = 0, condition = "P30")
+
+log2fc_long <- rbind(log2fc_long, p30_df) %>% mutate(condition = factor(condition, levels = c("P30","6mo","17mo"))) 
+dummy_df <- log2fc_long %>% dplyr::select(-cluster_title)
+
+ggplot(log2fc_long, aes( x = condition, y = log2FoldChange, group = ensemblgene_id, alpha = transparency_corrected)) + geom_line(color = "black") + facet_wrap(~cluster_title, scales = "free_y") + ylab("log2FC estimates relative to P30") 
+
+# ggplot(log2fc_long, aes( x = condition, y = log2FoldChange, group = ensemblgene_id)) + geom_line(data = dummy_df, color = "grey50")  + geom_line() + facet_wrap(~cluster_title) 
+
+```
+
+```{r}
+library(skmeans)
+library(ggpubr)
+
+set.seed(103)
+spherical <- skmeans(log2fc_mat, k= 6)
+sph_cl <- spherical$cluster %>% enframe(name = "ensemblgene_id",value = "sph_cluster") %>% mutate(sph_cluster = factor(sph_cluster))
+
+#scale but don't center. Positive values should remain positive, negative remain negative. L2 norm
+scaled_log2fc_mat <- t(scale(t(log2fc_mat), scale = T, center = F))
+
+test <- scaled_log2fc_mat %>% as.data.frame() %>% tibble::rownames_to_column(var ="ensemblgene_id") %>% left_join(sph_cl) 
+
+p1 <- ggplot(test, aes(x = log2FoldChange_age_6mo_vs_P30, y = log2FoldChange_age_17mo_vs_P30, color = sph_cluster)) + geom_point()+ xlab("scaled log2FoldChange_age_6mo_vs_P30") + ylab("scaled log2FoldChange_age_17mo_vs_P30")+ ggtitle("clusters visualized on scaled log2fc")
+
+
+test <- log2fc_mat %>% as.data.frame() %>% tibble::rownames_to_column(var ="ensemblgene_id")  %>% left_join(sph_cl)
+p2  <- ggplot(test, aes(x = log2FoldChange_age_6mo_vs_P30, y = log2FoldChange_age_17mo_vs_P30, color = sph_cluster)) + geom_point() + ggtitle("clusters visualized on raw log2fc")
+
+pl <- ggpubr::ggarrange(p2, p1, common.legend = T, legend = "right")
+pl <- annotate_figure(pl, top = text_grob("Clustered with spherical-k-means on raw log2fc"))
+pl
+
+pdf(here("plots/gene_modules_clustering_test.pdf"), width = 10, height = 10)
+pl
+dev.off()
+
+cluster_df <- sph_cl %>% add_count(sph_cluster) %>% mutate(cluster_title = paste0("cluster ",sph_cluster, " (n=",n,")"))
+```
+
+```{r}
+log2fc_long <- res_df_filtered %>%
+  full_join(cluster_df) %>%
+  mutate(condition = 
+           case_when(condition == "age_6mo_vs_P30" ~ "6mo", condition == "age_17mo_vs_P30" ~ "17mo")) %>%
+  mutate(transparency = 2*sqrt(1/n)) %>%
+  mutate(transparency_corrected = pmin(1, transparency)) %>% 
+  dplyr::select(-c(baseMean, lfcSE, stat, pvalue, padj, nlog10p, nlog10p_clipped))
+
+
+p30_df <- log2fc_long %>% dplyr::select(external_gene_name, ensemblgene_id, sph_cluster, n, cluster_title, transparency, transparency_corrected) %>% unique %>% mutate("log2FoldChange" = 0, condition = "P30")
+
+log2fc_long <- rbind(log2fc_long, p30_df) %>% mutate(condition = factor(condition, levels = c("P30","6mo","17mo"))) 
+dummy_df <- log2fc_long %>% dplyr::select(-cluster_title)
+
+#not displaying scaled fold changes, but clustered on scaled fold changes
+p1 <- ggplot(log2fc_long, aes( x = condition, y = log2FoldChange, group = ensemblgene_id, alpha = transparency_corrected)) + geom_line(color = "black") + facet_wrap(~cluster_title, scales = "free_y") + ylab("log2FC estimates relative to P30") + ggtitle("clustered on cosine distance of LFC") 
+
+scaled_log2fc_long <- scaled_log2fc_mat %>% as.data.frame() %>%
+  rownames_to_column(var = "ensemblgene_id") %>%
+  pivot_longer(!ensemblgene_id, values_to = "scaled_log2fc", names_to = "comp") %>%
+  mutate(condition = factor(case_when(
+    comp == "log2FoldChange_age_P30_vs_P30" ~ "P30",
+    comp == "log2FoldChange_age_6mo_vs_P30" ~ "6mo",
+    comp == "log2FoldChange_age_17mo_vs_P30" ~ "17mo",
+    ), levels = c("P30","6mo","17mo"))) %>%
+  full_join(cluster_df) %>%
+  mutate(transparency = sqrt(1/n)) %>%
+  mutate(transparency_corrected = pmin(1, transparency))
+
+p2 <- ggplot(scaled_log2fc_long, aes( x = condition, y = scaled_log2fc, group = ensemblgene_id, alpha = transparency_corrected)) + geom_line(color = "black") + facet_wrap(~cluster_title, scales = "free_y") + ylab("scaled log2FC estimates relative to P30") + ggtitle("clustered on cosine distance of LFC")
+
+res_df_filtered_wide_clusters <- res_df_filtered_wide %>% left_join(cluster_df)
+p3 <- ggplot(res_df_filtered_wide_clusters,aes(x = log2FoldChange_age_6mo_vs_P30, y=log2FoldChange_age_17mo_vs_P30, color = interaction(both_sig,direction, sep = ":" ))) + geom_point(size = I(0.01))+ xlab("6mo vs P30 log2FC") + ylab("17mo vs P30 log2FC") + ggtitle("Subset of genes for which at least one condition is signficantly DE")+ guides(colour = guide_legend(override.aes = list(size=5)))
+
+p4 <- ggplot(res_df_filtered_wide_clusters,aes(x = log2FoldChange_age_6mo_vs_P30, y=log2FoldChange_age_17mo_vs_P30, color = cluster_title)) + geom_point(size = I(0.01))+ xlab("6mo vs P30 log2FC") + ylab("17mo vs P30 log2FC") + ggtitle("Subset of genes for which at least one condition is signficantly DE")+ guides(colour = guide_legend(override.aes = list(size=5)))
+
+p5 <- ggplot(res_df_filtered_wide_clusters,aes(x = log2FoldChange_age_6mo_vs_P30, y=log2FoldChange_age_17mo_vs_P30, color = cluster_title)) + geom_point(size = I(0.01))+ xlab("6mo vs P30 log2FC") + ylab("17mo vs P30 log2FC") + ggtitle("Subset of genes for which at least one condition is signficantly DE")+ guides(colour = guide_legend(override.aes = list(size=5))) + xlim(c(-3,3)) + ylim(c(-3,3)) 
+
+p1
+p2
+p3
+p4
+p5
+
+table(res_df_filtered_wide_clusters[,c("direction","cluster_title")])
+
+pdf(here("plots/gene_dynamic_modules.pdf"), width = 10, height = 7)
+p1
+p2
+p3
+p4
+p5
+
+dev.off()
+```
+```{r}
+write.csv(cluster_df, here("results/dynamic_gene_modules.csv"), row.names = F)
+
+cluster_dynamics_df <- res_df_filtered_wide_clusters[,c("direction","sph_cluster")] %>% group_by(sph_cluster) %>% dplyr::count(direction) 
+write.csv(cluster_dynamics_df, here("results/dynamic_gene_modules_info.csv"), row.names = F)
+```
+
+
+Clusters 1, 2, and 3, and 5 contain genes spaning two different directions (e.g. cluster 2 has genes that go consistenly down, and genes that go down at 6mo but up at 17mo). Can we pull these out? Wasn't improved.
+
+
+Clustering on scaled all genes - with subsplitting based on directions of effect
+```{r}
+
+
+#further divide clusters with heterogenous effects 
+cluster_subsplit <- cluster_df %>% 
+  left_join(.,res_df_filtered_wide[,c("ensemblgene_id","direction")]) %>%
+  dplyr::select(sph_cluster, direction) %>%
+  unique() %>%
+  group_by(sph_cluster) %>%
+  summarise(direction = direction, n = n(), subgroup = letters[1:n()]) %>%
+  mutate(subgroup = ifelse(n == 1, "", subgroup),
+                           cluster = paste0(sph_cluster, subgroup)) %>% ungroup()
+
+cluster_df <- cluster_df %>% 
+  left_join(.,res_df_filtered_wide[,c("ensemblgene_id","direction")]) %>%
+  left_join(., cluster_subsplit[,c("sph_cluster","direction","cluster")]) %>% 
+  add_count(cluster, name = "subcluster_n") %>%
+  mutate(cluster_title = paste0("cluster ",cluster, " (n=",subcluster_n,")")) 
+
+log2fc_long <- res_df_filtered %>%
+  full_join(cluster_df) %>%
+  mutate(condition = 
+           case_when(condition == "age_6mo_vs_P30" ~ "6mo", condition == "age_17mo_vs_P30" ~ "17mo")) %>%
+  mutate(transparency = 2*sqrt(1/n)) %>%
+  mutate(transparency_corrected = pmin(1, transparency)) %>% 
+  dplyr::select(-c(baseMean, lfcSE, stat, pvalue, padj, nlog10p, nlog10p_clipped))
+
+
+p30_df <- log2fc_long %>% unique %>% mutate("log2FoldChange" = 0, condition = "P30")
+
+log2fc_long <- rbind(log2fc_long, p30_df) %>% mutate(condition = factor(condition, levels = c("P30","6mo","17mo"))) 
+dummy_df <- log2fc_long %>% dplyr::select(-cluster_title)
+
+#not displaying scaled fold changes, but clustered on scaled fold changes
+p1 <- ggplot(log2fc_long, aes( x = condition, y = log2FoldChange, group = ensemblgene_id, alpha = transparency_corrected)) + geom_line(color = "black") + facet_wrap(~cluster_title, scales = "free_y") + ylab("log2FC estimates relative to P30") + ggtitle("clustered on cosine distance of LFC") 
+
+scaled_log2fc_long <- scaled_log2fc_mat %>% as.data.frame() %>%
+  rownames_to_column(var = "ensemblgene_id") %>%
+  pivot_longer(!ensemblgene_id, values_to = "scaled_log2fc", names_to = "comp") %>%
+  mutate(condition = factor(case_when(
+    comp == "log2FoldChange_age_P30_vs_P30" ~ "P30",
+    comp == "log2FoldChange_age_6mo_vs_P30" ~ "6mo",
+    comp == "log2FoldChange_age_17mo_vs_P30" ~ "17mo",
+    ), levels = c("P30","6mo","17mo"))) %>%
+  full_join(cluster_df) %>%
+  mutate(transparency = sqrt(1/n)) %>%
+  mutate(transparency_corrected = pmin(1, transparency))
+
+p2 <- ggplot(scaled_log2fc_long, aes( x = condition, y = scaled_log2fc, group = ensemblgene_id, alpha = transparency_corrected)) + geom_line(color = "black") + facet_wrap(~cluster_title, scales = "free_y") + ylab("scaled log2FC estimates relative to P30") + ggtitle("clustered on cosine distance of LFC")
+
+res_df_filtered_wide_clusters <- res_df_filtered_wide %>% left_join(cluster_df)
+p3 <- ggplot(res_df_filtered_wide_clusters,aes(x = log2FoldChange_age_6mo_vs_P30, y=log2FoldChange_age_17mo_vs_P30, color = interaction(both_sig,direction, sep = ":" ))) + geom_point(size = I(0.01))+ xlab("6mo vs P30 log2FC") + ylab("17mo vs P30 log2FC") + ggtitle("Subset of genes for which at least one condition is signficantly DE")+ guides(colour = guide_legend(override.aes = list(size=5)))
+
+p4 <- ggplot(res_df_filtered_wide_clusters,aes(x = log2FoldChange_age_6mo_vs_P30, y=log2FoldChange_age_17mo_vs_P30, color = cluster_title)) + geom_point(size = I(0.01))+ xlab("6mo vs P30 log2FC") + ylab("17mo vs P30 log2FC") + ggtitle("Subset of genes for which at least one condition is signficantly DE")+ guides(colour = guide_legend(override.aes = list(size=5)))
+
+p5 <- ggplot(res_df_filtered_wide_clusters,aes(x = log2FoldChange_age_6mo_vs_P30, y=log2FoldChange_age_17mo_vs_P30, color = cluster_title)) + geom_point(size = I(0.01))+ xlab("6mo vs P30 log2FC") + ylab("17mo vs P30 log2FC") + ggtitle("Subset of genes for which at least one condition is signficantly DE")+ guides(colour = guide_legend(override.aes = list(size=5))) + xlim(c(-3,3)) + ylim(c(-3,3)) 
+
+p1
+p2
+p3
+p4
+p5
+
+table(res_df_filtered_wide_clusters[,c("direction","cluster_title")])
+
+```
+
+
+
+
+

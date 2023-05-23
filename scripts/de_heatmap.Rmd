@@ -1,0 +1,232 @@
+---
+title: "DE_heatmap"
+author: "Jared Slosberg"
+date: "3/10/2023"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, include= F}
+library(tidyverse)
+library(glue)
+library(DESeq2)
+library(here)
+library(tximport)
+library(RColorBrewer)
+library(vsn)
+library(ComplexHeatmap)
+library(biomaRt)
+```
+
+```{r}
+dds <- readRDS(here("data/bulkrna_dds.rds"))
+
+metadata_path <- here("metadata_merged.csv")
+exp_metadata <- read.csv(metadata_path, header = T)
+```
+
+Load in DE results and gene module clustering
+```{r}
+test_names <- resultsNames(dds)[-c(1)]
+
+de_res <- map(test_names, function(nm){
+  res <- read.csv(here(paste0("results/diff_exp/",nm,".csv")), row.names = 1)
+
+}) %>% setNames(test_names)
+
+gene_module_df <- read.csv(here("results/dynamic_gene_modules.csv"))
+clusters <- gene_module_df %>% pull(sph_cluster) %>% sort() %>% unique
+
+gene_modules <- map(clusters, function(cl){
+  gene_module_df %>% filter(sph_cluster == cl) %>% pull(ensemblgene_id)
+}) %>% setNames(clusters)
+
+all_de_genes <- gene_modules %>% unlist()
+
+cluster_vec <- gene_module_df[,c("ensemblgene_id","sph_cluster")] %>% deframe() %>% factor(levels = clusters) %>% sort
+cols <- scales::hue_pal()(7) %>% setNames(1:7)
+ha = HeatmapAnnotation(cluster = cluster_vec, col = list(cluster = cols), which = "row")
+
+```
+
+Heatmap of log-normalized expression estimates for DE genes
+```{r}
+
+ntd <- normTransform(dds) %>% assay 
+ntd_de <- ntd[names(cluster_vec),]
+
+ntd_summary <- ntd %>% as.data.frame() %>%
+  tibble::rownames_to_column(var = "gene_id") %>%
+  pivot_longer(!gene_id, names_to = "sample_name", values_to = "logcounts") %>%
+  left_join(., exp_metadata) %>%
+  group_by(gene_id, age, sex) %>%
+  summarise(mn = mean(logcounts), std = sd(logcounts) ) 
+
+sample_names <- colnames(ntd_de)
+age <- sample_names %>% str_split_fixed(.,"-", n=4) %>% .[,1] %>% factor(levels = c("P30","6mo","17mo"))
+sample_vec <- age %>% setNames(sample_names)
+
+ntd_average <- ntd_de %>% as.data.frame() %>% transmute(
+  mn_ntd_P30_M = rowMeans(dplyr::select(., starts_with("P30-M"))),
+  mn_ntd_6mo_M = rowMeans(dplyr::select(., starts_with("6mo-M"))),
+  mn_ntd_17mo_M = rowMeans(dplyr::select(., starts_with("17mo-M"))),
+  mn_ntd_P30_F = rowMeans(dplyr::select(., starts_with("P30-F"))),
+  mn_ntd_6mo_F = rowMeans(dplyr::select(., starts_with("6mo-F"))),
+  mn_ntd_17mo_F = rowMeans(dplyr::select(., starts_with("17mo-F"))))
+
+sample_names_average <- colnames(ntd_average)
+age_average <- sample_names_average %>% str_split_fixed(.,"_", n=4) %>% .[,3] %>% factor(levels = c("P30","6mo","17mo"))
+sample_vec_average <- age_average %>% setNames(sample_names_average)
+
+scaled_expression <- t(scale(t(ntd_de)))[names(cluster_vec),]
+scaled_average_expression <- t(scale(t(ntd_average)))[names(cluster_vec),]
+
+ComplexHeatmap::Heatmap(scaled_expression, show_row_names = F, name = "row z-score")
+
+dynamics_sidebar <- scaled_expression %>% as.data.frame() %>%
+  rownames_to_column(var = "ensemblgene_id") %>%
+  full_join(., gene_module_df) %>%
+  pivot_longer(!c(ensemblgene_id, sph_cluster, n, cluster_title),
+               names_to = "sample_name", values_to = "expression") %>%
+  separate(sample_name, sep = "-", c("age","sex","rep")) %>%
+  mutate(age = factor(age, levels = c("P30","6mo","17mo")))
+
+dynamics_gg <- ggplot(filter(dynamics_sidebar, sph_cluster == 1), aes(x = age, y = expression, group_by = "sex"))  +  stat_summary(aes(y = expression, group = 1), fun.y=mean, geom="line", colour="green") + xlab("") + theme_minimal() +  theme(axis.text.x= element_blank()) 
+
+```
+
+```{r}
+pdf(here("plots/diff_exp/de_genes_scaled_heatmap.pdf"), width = 12, height = 8)
+# ComplexHeatmap::Heatmap(scaled_expression, name = "expression z-score" ,show_row_names = F)
+#ComplexHeatmap::Heatmap(scaled_average_expression, name = "expression z-score", show_row_names = F, right_annotation = ha)
+# ComplexHeatmap::Heatmap(scaled_average_expression,
+#                         name = "expression z-score",
+#                         row_split = cluster_vec,
+#                         column_split = sample_vec,
+#                         show_row_names = F,
+#                         cluster_rows = F,
+#                         cluster_columns = F,
+#                         right_annotation = ha)
+
+ComplexHeatmap::Heatmap(scaled_expression,
+                        name = "expression z-score",
+                        row_split = cluster_vec,
+                        column_split = sample_vec,
+                        cluster_columns = F,
+                        cluster_column_slices = T,
+                        show_row_names = F,
+                        right_annotation = ha)
+
+ComplexHeatmap::Heatmap(ntd_de,
+                        name = "expression",
+                        row_split = cluster_vec,
+                        column_split = sample_vec,
+                        cluster_columns = F,
+                        cluster_column_slices = T,
+                        show_row_names = F,
+                        right_annotation = ha)
+
+ComplexHeatmap::Heatmap(scaled_average_expression,
+                        name = "expression z-score",
+                        row_split = cluster_vec,
+                        column_split = sample_vec_average,
+                        cluster_columns = F,
+                        cluster_column_slices = T,
+                        show_row_names = F,
+                        right_annotation = ha)
+
+# ComplexHeatmap::Heatmap(scaled_average_expression,
+#                         name = "expression z-score",
+#                         row_split = cluster_vec,
+#                         column_split = sample_vec,
+#                         show_row_names = F,
+#                         cluster_rows = F,
+#                         cluster_columns = F,
+#                         right_annotation = HeatmapAnnotation(ggplot = anno_empty(width = unit(3, "in")), which = "row"))
+# 
+# decorate_annotation("ggplot", 
+#                     {vp = current.viewport()$name
+#                       print(dynamics_gg, vp = vp)},
+#                     slice = 1)
+# 
+# grob = grid.grabExpr(draw(p1)) 
+
+dev.off()
+
+
+```
+```{r}
+#define color scale with more interpretability
+min_val <- min(ntd_de)
+max_val <- max(ntd_de)
+symmetric_max <- ifelse(abs(min_val) > max_val, abs(min_val), max_val)
+expression_pal_ramp <- circlize::colorRamp2(seq(min_val, max_val, length = 9), RColorBrewer::brewer.pal(9, "OrRd"))
+
+min_val <- min(scaled_expression)
+max_val <- max(scaled_expression)
+symmetric_max <- ifelse(abs(min_val) > max_val, abs(min_val), max_val)
+scaled_pal_ramp <- circlize::colorRamp2(seq(-symmetric_max, symmetric_max, length = 11), rev(RColorBrewer::brewer.pal(11, "RdBu")))
+
+pdf(here("plots/diff_exp/test_de_genes_scaled_heatmap.pdf"), width = 12, height = 8)
+# ComplexHeatmap::Heatmap(scaled_expression, name = "expression z-score" ,show_row_names = F)
+#ComplexHeatmap::Heatmap(scaled_average_expression, name = "expression z-score", show_row_names = F, right_annotation = ha)
+# ComplexHeatmap::Heatmap(scaled_average_expression,
+#                         name = "expression z-score",
+#                         row_split = cluster_vec,
+#                         column_split = sample_vec,
+#                         show_row_names = F,
+#                         cluster_rows = F,
+#                         cluster_columns = F,
+#                         right_annotation = ha)
+
+ComplexHeatmap::Heatmap(scaled_expression,
+                        col = scaled_pal_ramp,
+                        name = "expression z-score",
+                        row_split = cluster_vec,
+                        column_split = sample_vec,
+                        cluster_columns = F,
+                        cluster_rows = F,
+                        show_row_names = F,
+                        right_annotation = ha)
+
+ComplexHeatmap::Heatmap(ntd_de,
+                        col = expression_pal_ramp,
+                        name = "expression",
+                        row_split = cluster_vec,
+                        column_split = sample_vec,
+                        cluster_columns = F,
+                        cluster_rows = F,
+                        show_row_names = F,
+                        right_annotation = ha)
+
+# ComplexHeatmap::Heatmap(scaled_average_expression,
+#                         name = "expression z-score",
+#                         row_split = cluster_vec,
+#                         column_split = sample_vec_average,
+#                         cluster_columns = F,
+#                         cluster_column_slices = T,
+#                         show_row_names = F,
+#                         right_annotation = ha)
+
+# ComplexHeatmap::Heatmap(scaled_average_expression,
+#                         name = "expression z-score",
+#                         row_split = cluster_vec,
+#                         column_split = sample_vec,
+#                         show_row_names = F,
+#                         cluster_rows = F,
+#                         cluster_columns = F,
+#                         right_annotation = HeatmapAnnotation(ggplot = anno_empty(width = unit(3, "in")), which = "row"))
+# 
+# decorate_annotation("ggplot", 
+#                     {vp = current.viewport()$name
+#                       print(dynamics_gg, vp = vp)},
+#                     slice = 1)
+# 
+# grob = grid.grabExpr(draw(p1)) 
+
+dev.off()
+```
+

@@ -19,7 +19,7 @@ library(biomaRt)
 
 Read in experimental metadata
 ```{r}
-metadata_path <- here("metadata_merged.csv")
+metadata_path <- here("metadata_merged_filtered.csv")
 
 
 exp_metadata <- read.csv(metadata_path, header = T)
@@ -29,9 +29,10 @@ exp_metadata <- read.csv(metadata_path, header = T)
 # named_runs <- exp_metadata %>% deframe
 ```
 
-#Read in DESEQ2 object
+Read in DESEQ2 object
 ```{r}
-dds <- readRDS(here("data/bulkrna_dds_collapsed_before.rds"))
+dds <- readRDS(here("data/bulkrna_dds.rds"))
+metadata <- read.csv(metadata_path)
 ```
 
 Read in learned and other expression signatures
@@ -64,9 +65,8 @@ geneid2name <- gene_description[,c("ensembl_gene_id_version", "external_gene_nam
 ```{r}
 library(projectR)
 
-rownames(dds)
 vsd <- vst(dds, blind=FALSE)
-vsd_cleaned <- as.matrix(assay(vsd)) %>% as.data.frame() %>% rownames_to_column(var = "ensembl_gene_id_version") %>% left_join(., geneid2name)  %>% drop_na() %>% dplyr::select(-starts_with("ensembl")) %>% filter(!duplicated(external_gene_name)) %>% column_to_rownames(var = "external_gene_name") %>% as.matrix()
+vsd_cleaned <- as.matrix(assay(vsd)) %>% as.data.frame() %>% rownames_to_column(var = "ensembl_gene_id_trimmed") %>% left_join(., geneid2name)  %>% drop_na() %>% dplyr::select(-starts_with("ensembl")) %>% filter(!duplicated(external_gene_name)) %>% column_to_rownames(var = "external_gene_name") %>% as.matrix()
 
 set.seed(007)
 proj_res <- projectR(vsd_cleaned, as.matrix(lmmp_gw_clean))
@@ -82,28 +82,6 @@ proj_long <- proj_long %>% mutate(
                           age == "6mo" ~ 180 ,
                           age == "P30" ~ 30))
 ```
-
-```{r}
-pl <- ggplot(proj_long) + geom_point(aes(x = age, y = weight, color = sample_name)) + facet_wrap(~pattern, ncol = 5, scales = "free_y")
-
-
-pl <- ggplot(proj_long,aes(x = age_numeric, y = weight, color = sample_name, group = "age_numeric"))  +
-  # stat_summary(fun = mean, geom = "point",position=position_dodge2(width = .3)) + 
-  # stat_summary(fun.data = mean_se, geom = "errorbar",position=position_dodge2(width = 0.2), width = .3) +
-  geom_point(color = "black", size = 0.2, position = position_dodge(width=.3)) +
-  facet_wrap(~pattern, ncol = 5, scales = "free_y") + 
-  theme(axis.text.y = element_blank()) +
-  geom_smooth(method= "lm")
-
-if(!dir.exists(here("plots/NMF/lmmp_projections"))){
-  dir.create(here("plots/NMF/lmmp_projections"))
-}
-
-pdf(here("plots/NMF/lmmp_projections/projection_weights_by_sample.pdf"), height = 20, width = 15)
-pl
-dev.off()
-```
-
 ```{r}
 pattern_names <- colnames(lmmp_gw_clean)
 lm_res <- map_df(pattern_names, function(patt){
@@ -114,15 +92,104 @@ lm_res <- map_df(pattern_names, function(patt){
 
 ggplot(lm_res, aes(x = pattern, y = coef)) + geom_bar(stat = "identity") + 
   theme(axis.text.x = element_text(angle =90)) +
-  geom_text(data = filter(lm_res, sig == T), aes(x = pattern, y = coef),label = "*") +
-  ggtitle("Coefficient for age in pattern_weight ~ numeric(age. 6mo LMMP patterns")
+  geom_text(data = filter(lm_res, sig == T), aes(x = pattern, y = coef),label = "*", color = "red") +
+  ggtitle("Coefficient for age in pattern_weight ~ numeric(age): 6mo LMMP patterns")
+
+#with sex included - removed term "sexM:age17mo" since sample size = 2
+terms <- c("age_numeric", "sexM" , "age_numeric:sexM")
+lm_res <- map_df(pattern_names, function(patt){
   
+  fit <- lm(weight ~ age_numeric + sex + age_numeric:sex, filter(proj_long, pattern == patt))
+  
+  map_df(terms, function(term){
+    test <- data.frame(pattern = patt, model_term = term, coef = coefficients(fit)[term],
+             pvalue = summary(fit)$coefficients[term,4])
+  })
+}) %>% mutate(significance = case_when(
+  sign(coef) == 1 & pvalue < 0.05 ~ "up",
+  sign(coef) == -1 & pvalue < 0.05 ~ "down",
+  .default = NA
+  ))
+
+coef_sig_plot_list <- map(terms, function(term){
+  res <- lm_res %>% filter(model_term == term )
+  
+  ggplot(res, aes(x = pattern, y = coef, fill =significance)) + geom_bar(stat = "identity") + 
+  theme(axis.text.x = element_text(angle =90)) +
+ # geom_text(data = filter(res, sig == T), aes(x = pattern, y = coef),label = "*", color = "red") +
+  ggtitle(paste0("Coefficient for ", term, " in pattern_weight ~ numeric(age) + sex + numeric(age):sex - 6mo LMMP patterns")) + 
+    scale_fill_manual(values = c("up" = "red", "down" = "blue"))
+          
+})
+
+pdf(here("plots/NMF/lmmp_projections/projection_sig_by_term.pdf"), width = 10, height = 6)
+coef_sig_plot_list
+dev.off()
+```
+
+```{r}
+
+pattern_var <- rowVars(proj_res) %>% setNames(pattern_names) %>% enframe(name = "pattern", value = "var")
+pattern_mean <- rowMeans(proj_res) %>% setNames(pattern_names) %>% enframe(name = "pattern", value = "mean")
+
+pattern_df <- full_join(pattern_mean, pattern_var) %>% mutate(var_pct = var/abs(mean))
+
+
+ggplot(pattern_df, aes(x = mean, y = var)) + geom_point()+ ggrepel::geom_text_repel(aes(label = pattern))
+ggplot(pattern_df, aes(x = mean, y = var_pct)) + geom_point() + ggrepel::geom_text_repel(aes(label = pattern))
+
+```
+
+```{r}
+pl <- ggplot(proj_long) + geom_point(aes(x = age, y = weight, color = sample_name)) + facet_wrap(~pattern, ncol = 5, scales = "free_y")
+
+
+pl <- ggplot(proj_long,aes(x = age_numeric, y = weight, group = sex, color = sex))  +
+  stat_summary(fun = mean, geom = "line",position=position_dodge2(width = .3)) + 
+  stat_summary(fun.data = mean_se, geom = "errorbar",position=position_dodge2(width = 0.2), width = .3) +
+  geom_point(size = 0.2, position = position_dodge(width=.3)) +
+  facet_wrap(~pattern, ncol = 5, scales = "free_y") + 
+  theme(axis.text.y = element_blank()) +
+
+
+# pl <- ggplot(proj_long,aes(x = as.factor(age_numeric), y = weight, as.factor(age_numeric), color = sex))  +
+#   # stat_summary(fun = mean, geom = "point",position=position_dodge2(width = .3)) + 
+#   # stat_summary(fun.data = mean_se, geom = "errorbar",position=position_dodge2(width = 0.2), width = .3) +
+#   #geom_point(size = 0.2, position = position_dodge(width=.3)) +
+#   geom_boxplot() +
+#   facet_wrap(~pattern, ncol = 5, scales = "free_y") + 
+#   theme(axis.text.y = element_blank()) +
+#   geom_smooth(method= "lm")
+
+if(!dir.exists(here("plots/NMF/lmmp_projections"))){
+  dir.create(here("plots/NMF/lmmp_projections"))
+}
+
+pdf(here("plots/NMF/lmmp_projections/projection_weights_by_sample.pdf"), height = 20, width = 15)
+pl
+dev.off()
+```
+
+
+```{r}
+projection_pc <- prcomp(proj_res)
+sample_weights <- projection_pc$rotation %>% as.data.frame() %>% tibble::rownames_to_column(var = "sample_name") %>% left_join(metadata)
+
+sample_umap <- uwot::umap(as.data.frame( projection_pc$rotation),
+                          n_neighbors = 2) %>% as.data.frame()
+rownames(sample_umap) <- rownames(projection_pc$rotation)
+colnames(sample_umap) <- c("UMAP1","UMAP2")
+sample_umap <- sample_umap %>% tibble::rownames_to_column(var = "sample_name") %>% left_join(., metadata) 
+
+ggplot(sample_weights, shape = 21, aes(x = PC1, y = PC2, color = age, fill = sex)) + geom_point()
+ggplot(sample_umap, shape = 21, aes(x = UMAP1, y = UMAP2, color = age, fill = sex)) + geom_point()
+
 ```
 
 
 Projection of bulk signatures with lmmp scRNA. "Where are these genes expressed"
 
-```{r}
+```{r, eval = F}
 lmmp <- readRDS("/data/users/jared/ENS/Timecourse_ENS/TC_LMMP.rds")
 
 #compare distributions of normalized counts to make sure projection is fair
@@ -131,7 +198,7 @@ as.matrix(assay(lmmp[,1:1000], "logcounts")) %>% unlist() %>% .[. > 1] %>% hist(
 as.matrix(assay(vsd)) %>% hist(breaks = 100)
 ```
 
-```{r}
+```{r, eval = F}
 
 dimensionalities <- c("10","15","20","25")
 nmf_list <- map(dimensionalities, function(dimensionality){
@@ -143,7 +210,7 @@ nmf_list <- map(dimensionalities, function(dimensionality){
 }) %>% setNames(dimensionalities)
 ```
 
-```{r}
+```{r, eval = F}
 source("/data/users/jared/ENS/Timecourse_ENS/scripts/accessory_functions/pattern_plotting.R")
 
 umap_coord <- reducedDim(lmmp, "UMAP") %>% as.data.frame() %>% rownames_to_column(var = "cell_id") 
@@ -183,6 +250,7 @@ nmf_list <- map(dimensionalities, function(dimensionality){
 
 
 ```
+
 ```{r, eval = F}
 library(preprocessCore)
 

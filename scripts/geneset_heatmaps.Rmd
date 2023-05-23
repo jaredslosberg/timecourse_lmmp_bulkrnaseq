@@ -1,0 +1,111 @@
+---
+title: "geneset expression"
+author: "Jared Slosberg"
+date: "5/16/2023"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(DESeq2)
+library(here)
+library(tidyverse)
+```
+
+```{r}
+dds <- readRDS(here("data/bulkrna_dds.rds"))
+ntd <- normTransform(dds) %>% assay()
+
+```
+
+```{r}
+library(biomaRt)
+mart1 = useMart("ensembl", dataset="hsapiens_gene_ensembl")
+
+mart2 = useMart("ensembl", dataset="mmusculus_gene_ensembl")
+
+ 
+
+# # human / mouse id ortholog map.
+# 
+# orthoMap_human <- getLDS(attributes=c("ensembl_gene_id", "hgnc_symbol"), filters="ensembl_gene_id", values=human_de_geneIDs, mart=mart1, attributesL=c("ensembl_gene_id"), martL=mart2, valuesL=all_genes, uniqueRows=FALSE)
+
+
+```
+
+Define gene lists
+```{r}
+set_names <- list.files(here("data/ligand_receptor_db/")) %>% str_split_fixed(., "\\.", n = 2) %>% .[,1]
+
+gene_df <- read_tsv(here(paste0("data/ligand_receptor_db/", set_names[1], ".txt"))) 
+print(unique(gene_df$Type))
+
+all_genes <- gene_df[,1]
+gene.data <- getBM(attributes=c("external_gene_name","mmusculus_homolog_ensembl_gene", "mmusculus_homolog_associated_gene_name"),
+                   filters = 'hgnc_symbol', values = all_genes , mart = mart1)
+
+(gene.data$mmusculus_homolog_associated_gene_name %in% rowData(dds)$external_gene_name) %>% table
+
+empty_ind <- (gene.data== "") %>% rowSums() > 0
+keep_genes <- gene.data$external_gene_name %>% table %>% .[. < 5] %>% names()
+
+#Final gene list after matching homologs, removing empty entries, removing genes with 5+ matches, and removing genes not in filtered object
+gene.data.filt <- gene.data[!empty_ind,] %>% filter(external_gene_name %in% keep_genes) %>% filter(mmusculus_homolog_ensembl_gene %in% rownames(dds))
+
+gene_df_filt <- gene_df %>% filter(`Hgnc Symbol` %in% gene.data.filt$external_gene_name)
+
+gene_df_filt$Type %>% table
+
+filtered_genes <- gene.data.filt %>% mutate(ensembl_gene_id = mmusculus_homolog_ensembl_gene, external_gene_name = mmusculus_homolog_associated_gene_name)
+```
+
+Prep count matrix by sample and merged by age
+```{r}
+
+ntd_long <- ntd %>% as.data.frame() %>% rownames_to_column(var = "ensembl_gene_id") %>%
+  pivot_longer(!ensembl_gene_id, names_to = "sample_name", values_to = "counts") %>%
+  separate(., "sample_name", into = c("age","sex","rep"), sep = "-", remove = F) %>%
+  mutate(age = factor(age, levels = c("P30","6mo","17mo")),
+         age_numeric = case_when(
+           age == "P30" ~ 30,
+           age == "6mo" ~ 180, 
+           age == "17mo" ~ 510))
+
+
+ntd_avg <- ntd_long %>% group_by(ensembl_gene_id, sex, age) %>%
+  summarise(avg_expression = mean(counts), n = n()) 
+```
+
+Subset count matrix to query genes
+```{r}
+ntd_long_sub <- ntd_long %>% right_join(filtered_genes)
+
+# pdf(here("plots/diff_exp/collagen_expression.pdf"), width = 16, height = 8)
+ggplot(ntd_long_sub[1:16,],aes(x = age_numeric, y = counts))+ geom_point() +
+  facet_wrap(~external_gene_name, scales = "free_y") +
+  geom_smooth(method = "lm") +
+  ggtitle("Collagen expression in Small Intestine LMMP")
+# ggplot(ntd_long_sub[1:100,],aes(x = age_mo, y = counts, group = age_mo))+ geom_boxplot() + facet_wrap(~external_gene_name, scales = "free_y", ncol = 10) + geom_smooth(method = "lm", aes(color = de))
+#dev.off()
+```
+
+TODO: cluster by type of ECM gene and add DE marker as sidebar annotation
+```{r}
+ntd_sub <- ntd[filtered_genes$ensembl_gene_id,] %>% as.matrix()
+rownames(ntd_sub) <- names(filtered_genes$external_gene_name)
+
+scaled_expression <- t(scale(t(ntd_sub)))
+pl <- ComplexHeatmap::Heatmap(as.matrix(scaled_expression), column_split = colData(dds)$age,
+                              cluster_column_slices = F, cluster_columns = T, name = "scaled_expression")
+
+# pdf(here("plots/diff_exp/collagen_expression_heatmap.pdf"), width = 10, height = 8)
+# pl
+# dev.off()
+```
+
+
+
+
