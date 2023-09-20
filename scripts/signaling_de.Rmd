@@ -47,3 +47,58 @@ geneid2name <- gene_description[,c("ensembl_gene_id_version", "external_gene_nam
 gene_ids <- geneid2name %>% mutate(ensemblgene_id = ensembl_gene_id_version)
 ```
 
+
+```{r}
+dds <- readRDS(here("data/bulkrna_dds.rds"))
+ntd <- normTransform(dds) %>% assay()
+ntd_long <- ntd %>% as.data.frame() %>% rownames_to_column(var = "ensembl_gene_id") %>%
+  pivot_longer(!ensembl_gene_id, names_to = "sample_name", values_to = "counts") %>%
+  separate(., "sample_name", into = c("age","sex","rep"), sep = "-", remove = F) %>%
+  mutate(age = factor(age, levels = c("P30","6mo","17mo")),
+         age_numeric = case_when(
+           age == "P30" ~ 30,
+           age == "6mo" ~ 180, 
+           age == "17mo" ~ 510))
+
+
+de_modules <- read.csv(here("results/dynamic_gene_modules.csv")) %>% mutate(ensembl_gene_id = ensemblgene_id)
+clusters <- de_modules %>% pull(sph_cluster) %>% sort() %>% unique
+```
+
+```{r}
+library(ComplexHeatmap)
+library(org.Mm.eg.db)
+library(GO.db)
+
+go_terms <- list("hippo signaling" = "GO:0035329")
+map(names(go_terms), function(term){
+  
+  go_id <- go_terms[[term]]
+  results <- AnnotationDbi::select(org.Mm.eg.db, keys=go_id, columns = c('SYMBOL',"ENSEMBL"), keytype = "GOALL")
+  genes <- results %>% dplyr::select(SYMBOL,ENSEMBL) %>% unique %>% transmute(symbol = SYMBOL, ensembl_gene_id = ENSEMBL)
+  filtered_genes <- genes %>% filter(ensembl_gene_id %in% rownames(dds))
+  
+  cluster_annot <- de_modules %>% right_join(filtered_genes)
+  
+  cluster_vec <- cluster_annot[,c("ensembl_gene_id","sph_cluster")] %>% deframe() %>% factor(levels = clusters)
+  cols <- c(scales::hue_pal()(6), "#CCCCCC") %>% setNames(1:7)
+  
+  ha = HeatmapAnnotation(module = cluster_vec, col = list(module = cols), which = "row")
+  
+  ntd_sub <- ntd[filtered_genes$ensembl_gene_id,] 
+  rownames(ntd_sub) <- filtered_genes$symbol
+  
+  scaled_expression <- t(scale(t(ntd_sub)))
+  pl <- ComplexHeatmap::Heatmap(as.matrix(scaled_expression),column_split = colData(dds)$age,
+                                cluster_column_slices = F, cluster_columns = T, name = "scaled_expression",
+                                right_annotation = ha,
+                                column_title = paste(term, go_id, sep = ": "))
+  
+  term_cleaned <- term %>% str_replace_all(., " ","_")
+  
+  pdf(here(paste0("plots/diff_exp/geneset_heatmaps/",term_cleaned,".pdf")))
+  print(pl)
+  dev.off()
+})
+```
+

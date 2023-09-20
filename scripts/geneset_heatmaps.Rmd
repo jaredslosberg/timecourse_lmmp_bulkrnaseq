@@ -13,6 +13,7 @@ knitr::opts_chunk$set(echo = TRUE)
 library(DESeq2)
 library(here)
 library(tidyverse)
+library(ComplexHeatmap)
 ```
 
 ```{r}
@@ -40,6 +41,7 @@ Define gene lists
 ```{r}
 set_names <- list.files(here("data/ligand_receptor_db/")) %>% str_split_fixed(., "\\.", n = 2) %>% .[,1]
 
+#for ECM, ECM-related Receptors, and ECM-related ligands
 gene_df <- read_tsv(here(paste0("data/ligand_receptor_db/", set_names[1], ".txt"))) 
 print(unique(gene_df$Type))
 
@@ -87,15 +89,14 @@ ntd_long_sub <- ntd_long %>% right_join(filtered_genes)
 ggplot(ntd_long_sub[1:16,],aes(x = age_numeric, y = counts))+ geom_point() +
   facet_wrap(~external_gene_name, scales = "free_y") +
   geom_smooth(method = "lm") +
-  ggtitle("Collagen expression in Small Intestine LMMP")
+  ggtitle("expression in ileum LMMP")
 # ggplot(ntd_long_sub[1:100,],aes(x = age_mo, y = counts, group = age_mo))+ geom_boxplot() + facet_wrap(~external_gene_name, scales = "free_y", ncol = 10) + geom_smooth(method = "lm", aes(color = de))
 #dev.off()
 ```
 
 TODO: cluster by type of ECM gene and add DE marker as sidebar annotation
 ```{r}
-ntd_sub <- ntd[filtered_genes$ensembl_gene_id,] %>% as.matrix()
-rownames(ntd_sub) <- names(filtered_genes$external_gene_name)
+ntd_sub <- ntd[filtered_genes$ensembl_gene_id,] 
 
 scaled_expression <- t(scale(t(ntd_sub)))
 pl <- ComplexHeatmap::Heatmap(as.matrix(scaled_expression), column_split = colData(dds)$age,
@@ -106,6 +107,32 @@ pl <- ComplexHeatmap::Heatmap(as.matrix(scaled_expression), column_split = colDa
 # dev.off()
 ```
 
+```{r}
+de_modules <- read.csv(here("results/dynamic_gene_modules.csv")) %>% mutate(ensembl_gene_id = ensemblgene_id)
+clusters <- de_modules %>% pull(sph_cluster) %>% sort() %>% unique
 
+cluster_annot <- de_modules %>% right_join(filtered_genes)
+
+cluster_vec <- cluster_annot[,c("ensembl_gene_id","sph_cluster")] %>% deframe() %>% factor(levels = clusters)
+cols <- c(scales::hue_pal()(6), "#CCCCCC") %>% setNames(1:7)
+ha = HeatmapAnnotation(module = cluster_vec, col = list(module = cols), which = "row")
+
+
+hm <- ComplexHeatmap::Heatmap(scaled_expression,
+                        column_title = " ECM/Receptor/Ligand",
+                        name = "expression z-score",
+                        column_split = colData(dds)$age,
+                        cluster_columns = F,
+                        cluster_column_slices = T,
+                        show_row_names = F,
+                        right_annotation = ha)
+
+hm
+
+pdf(here("plots/diff_exp/geneset_heatmaps/ecm_ligand_receptors.pdf"), width = 8)
+hm
+dev.off()
+
+```
 
 

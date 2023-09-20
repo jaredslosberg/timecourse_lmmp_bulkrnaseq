@@ -6,6 +6,8 @@ date: "2/10/2023"
 output: html_document
 ---
 
+Analyze expression changes in genes that mark cell types/clusters in lmmp scRNAseq
+
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
@@ -24,35 +26,67 @@ library(biomaRt)
 
 ```{r}
 dds <- readRDS(here("data/bulkrna_dds.rds"))
-rownames(dds) <- rownames(dds) %>% str_split_fixed(., "\\.", 2) %>% .[,1]
 metadata_path <- here("metadata_merged_filtered.csv")
 exp_metadata <- read.csv(metadata_path, header = T)
 ```
 
 ```{r}
-ct_markers <- read.csv("/data/users/jared/ENS/6mo_LMMP/results/cluster_markers.csv", row.names = 1)
+ct_markers_6mo <- read.csv("/data/users/jared/ENS/6mo_LMMP/results/cluster_markers.csv", row.names = 1)
+ct_markers_tc <- read.csv("/data/users/jared/ENS/Timecourse_ENS/results/lmmp_cluster_celltype_markers_10k.csv",
+                          row.names = 1) %>%
+  group_by(cell_group) %>% slice_max(order_by = marker_score, n = 50)
+  
+ct_markers_tc$cell_type <- ct_markers_tc$cell_type %>%
+  recode("NENs" = "NC-neurons",
+         "Neuroglia" = "NC-glia", 
+         "fibroblasts" = "Fibroblasts",
+         "fibroblast 1" = "Fibroblasts",
+         "ICC?" = "ICC",
+         "smooth muscle or junk" = "SMC",
+         "smooth muscle" = "SMC",
+         "endothelial" = "Endothelial",
+         "enterocytes" = "Enterocytes", 
+         "macrophage" = "Macrophage", 
+         "Unknown" = "Fibroblasts",
+         "mucosal epithelium" = "Mucosal epith.")
 
-cts <- ct_markers %>% dplyr::pull(cell_type) %>% unique
+cts_6mo <- ct_markers_6mo %>% dplyr::pull(cell_type) %>% unique
+cts_tc <- ct_markers_tc %>% dplyr::pull(cell_type) %>% unique
 
+cts_6mo
+cts_tc
+
+#by pseudoR2
+ggplot(ct_markers_6mo) + geom_density(aes(x = pseudo_R2, color = cell_type))
+ggplot(ct_markers_tc) + geom_density(aes(x = pseudo_R2, color = cell_type))
+
+ct_markers_6mo %>% group_by(cell_group, cell_type) %>% filter(pseudo_R2 > 0.5) %>% summarise(n())
+ct_markers_tc %>% group_by(cell_group, cell_type) %>% filter(pseudo_R2 > 0.5) %>% summarise(n())
+```
+
+```{r}
 de_gene_modules <- read.csv(here("results/dynamic_gene_modules.csv")) %>% mutate(gene_id = ensemblgene_id)
 module_color_df <- data.frame(
-  cluster.k.7 = sort(unique(de_gene_modules$cluster.k.7)),
-  cluster.color = scales::hue_pal()(length(unique(de_gene_modules$cluster.k.7))))
+  sph_cluster = sort(unique(de_gene_modules$sph_cluster)),
+  cluster.color = scales::hue_pal()(length(unique(de_gene_modules$sph_cluster))))
 de_gene_modules <- left_join(de_gene_modules, module_color_df)
 
 all_de_genes <- de_gene_modules$ensemblgene_id
 ```
 
+For 6month data
 ```{r}
+ct_markers <- ct_markers_6mo
+
 n_min_markers <- 2
 n_max_markers <- 5
-min_marker_score <- 0.5 #affects maximum returned, but minimum of n_min_marker will always be returned
-marker_by_ct <- map(cts, function(ct){
+min_r2 <- 0.5 #affects maximum returned, but minimum of n_min_marker will always be returned
+marker_by_ct <- map(cts_6mo, function(ct){
   
   #for each celltype pull top markers
   filtered_markers <- ct_markers %>%
     dplyr::filter(cell_type == ct) %>%
-    dplyr::filter(marker_score > min_marker_score) %>%
+    dplyr::filter(pseudo_R2 > min_r2) %>%
     slice_max(order_by = marker_score, n = n_max_markers) 
   
   if(nrow(filtered_markers) < n_min_markers){
@@ -63,24 +97,25 @@ marker_by_ct <- map(cts, function(ct){
   
   return(filtered_markers)
   
-}) %>% setNames(cts)
+}) %>% setNames(cts_6mo)
 
 gene_df <- ct_markers[,c("gene_id","gene_short_name")] %>% unique %>% left_join(de_gene_modules)
-ct_genes_genes <- marker_by_ct %>% bind_rows() %>% pull(gene_id) 
+ct_genes <- marker_by_ct %>% bind_rows() %>% pull(gene_id) 
 ntd <- normTransform(dds) %>% assay 
 
 ntd_long <- ntd %>% as.data.frame() %>% tibble::rownames_to_column(var = "gene_id") %>% pivot_longer(!gene_id, names_to = "sample_name", values_to = "logcounts") %>% left_join(., exp_metadata)
 
-ntd_summary <- ntd_long %>% group_by(gene_id, age, sex) %>%
-  summarise(mn = mean(logcounts), std = sd(logcounts) ) %>%
+#average by age, no separation by sex
+ntd_summary <- ntd_long %>% group_by(gene_id, age) %>%
+  mutate(mn = mean(logcounts), st_err = sd(logcounts)/sqrt(n() )) %>%
   left_join(., gene_df) %>%
   mutate(cluster.color = replace_na(cluster.color, "grey50"),
-         cluster.k.7 = replace_na(cluster.k.7, "not_de"))
+         sph_cluster = replace_na(sph_cluster, "not_de"))
 ```
 
 ```{r}
 
-pls <- map(cts, function(ct){
+pls <- map(cts_6mo, function(ct){
   gns <- marker_by_ct[[ct]] %>% pull(gene_short_name)
   
   #Issue - "cell type" specificities from scRNA were determined by cluster. If there are two clusters both with the same celltype annotation - they will show up twice here because there are two marker scores
@@ -90,12 +125,12 @@ pls <- map(cts, function(ct){
     filter(gene_short_name %in% gns) %>%
     group_by(gene_short_name) %>% 
     slice_min(cell_group, n = 1) %>%   #this is the work around for the issue above. It takes the marker score for the cluster with more cells (lower cluster number (i.e. cluster 1 is largest)
-    transmute(gene_short_name = gene_short_name, marker_score = marker_score, gsn_marker = paste0(gene_short_name, ": score ", round(marker_score,3)))
+    transmute(gene_short_name = gene_short_name, pseudo_R2 = pseudo_R2, gsn_marker = paste0(gene_short_name, ": scRNA p_R2 ", round(pseudo_R2,3)))
   
   counts <- ntd_summary %>% filter(gene_short_name %in% gns) %>%
     mutate(age = factor(age, levels = c("P30","6mo","17mo"))) %>%
     left_join(., gene_marker_scores, multiple= "all") %>%
-    arrange(desc(marker_score))
+    arrange(desc(pseudo_R2))
   # ggplot(counts, aes(x = age, y = mn)) +
   #   geom_point(aes(color = sex, group = gene_short_name)) +
   #   facet_grid(rows = vars(gene_short_name), scales = "free_y" ) +
@@ -104,12 +139,12 @@ pls <- map(cts, function(ct){
   #   scale_y_continuous(limits = c(0,NA)) + 
   #   geom_smooth(method = "lm", formula = y ~ x, aes( group = gene_short_name, color= cluster.k.7), show.legend = F)
 
-  ggplot(counts, aes(x = age, y = mn)) +
+  ggplot(counts, aes(x = age)) +
     ylab(glue::glue("logcounts - ", ct, " genes")) +
-    geom_errorbar(aes(ymin = mn-std, ymax = mn+std), width = 0.05) +
+    geom_errorbar(aes(ymin = mn-st_err, ymax = mn+st_err), width = 0.05) +
     scale_y_continuous(limits = c(0,NA)) +
-    geom_smooth(method = "lm", formula = y ~ x, aes(group= cluster.k.7, color = cluster.k.7)) + 
-    geom_point(shape = 21, aes(fill = sex), color = "grey80") +
+    geom_smooth(method = "lm", formula = y ~ x, aes(y = logcounts, group= sph_cluster, color = sph_cluster)) + 
+    geom_point(aes(y = logcounts, fill = sex), shape = 21, color = "grey80") +
     scale_color_manual(values = deframe(module_color_df), na.value = "grey50")+
     facet_wrap(~gsn_marker, ncol = 1, scales = "free_y")
   
@@ -117,12 +152,47 @@ pls <- map(cts, function(ct){
 
 pl_final <- do.call(ggpubr::ggarrange, list(plotlist =pls, ncol = 2))
 
-pdf(here("plots/diff_exp/scrnaseq_ct_marker_expression.pdf"), width = 8)
+pdf(here("plots/diff_exp/scrnaseq_6mo_ct_marker_expression.pdf"), width = 8)
 pl_final
 dev.off()
 ```
-
+6mo table
 ```{r}
+ct_markers <- ct_markers_6mo
+
+min_r2 <- 0.5 #affects maximum returned, but minimum of n_min_marker will always be returned
+marker_by_ct <- map(cts_6mo, function(ct){
+  
+  #for each celltype pull top markers
+  filtered_markers <- ct_markers %>%
+    dplyr::filter(cell_type == ct) %>%
+    dplyr::filter(pseudo_R2 > min_r2) 
+  
+  return(filtered_markers)
+  
+}) %>% setNames(cts_6mo)
+
+gene_df <- ct_markers[,c("gene_id","gene_short_name")] %>% unique %>% left_join(de_gene_modules)
+ct_genes <- marker_by_ct %>% bind_rows() %>%  left_join(de_gene_modules)%>% 
+  group_by(cell_type) %>%
+ summarise(n_markers = n(),
+            n_markers_de = sum(!is.na(sph_cluster)))
+
+ct_modules <- map_df(cts_6mo, function(ct){
+  df <- marker_by_ct[[ct]] %>% left_join(de_gene_modules) %>% 
+    filter(!is.na(sph_cluster))
+  
+  df_new <- data.frame(
+    cell_type = ct,
+    marker_genes = paste(marker_by_ct[[ct]]$gene_short_name, collapse = ","),
+    de_marker_genes = paste(df$gene_short_name, collapse = ","),
+    de_modules = paste(sort(unique(df$sph_cluster)), collapse = ","))
+})
+
+de_markers_6mo <- full_join(ct_genes,ct_modules)
+
+```
+```{r, eval = F}
 marker_df <- marker_by_ct %>% bind_rows %>% mutate(ensemblgene_id = gene_id)
 #17month vs P30
 res <- read.csv(here("results/diff_exp/age_17mo_vs_P30.csv"))
@@ -137,6 +207,127 @@ map(cts, function(ct){
   
 
 })
+```
+For timecourse data
+```{r}
+ct_markers <- ct_markers_tc
+
+n_min_markers <- 2
+n_max_markers <- 5
+min_r2 <- 0.5 #affects maximum returned, but minimum of n_min_marker will always be returned
+marker_by_ct <- map(cts_tc, function(ct){
+  
+  #for each celltype pull top markers
+  filtered_markers <- ct_markers %>%
+    dplyr::filter(cell_type == ct) %>%
+    dplyr::filter(pseudo_R2 > min_r2) %>%
+    slice_max(order_by = marker_score, n = n_max_markers) 
+  
+  if(nrow(filtered_markers) < n_min_markers){
+    filtered_markers <- ct_markers %>%
+      dplyr::filter(cell_type == ct) %>%
+    slice_max(order_by = marker_score, n = n_min_markers) 
+  }
+  
+  return(filtered_markers)
+  
+}) %>% setNames(cts_tc)
+
+gene_df <- ct_markers[,c("gene_id","gene_short_name")] %>% unique %>% left_join(de_gene_modules)
+ct_genes <- marker_by_ct %>% bind_rows() %>% pull(gene_id) 
+ntd <- normTransform(dds) %>% assay 
+
+ntd_long <- ntd %>% as.data.frame() %>% tibble::rownames_to_column(var = "gene_id") %>% pivot_longer(!gene_id, names_to = "sample_name", values_to = "logcounts") %>% left_join(., exp_metadata)
+
+#average by age, no separation by sex
+ntd_summary <- ntd_long %>% group_by(gene_id, age) %>%
+  mutate(mn = mean(logcounts), st_err = sd(logcounts)/sqrt(n() )) %>%
+  left_join(., gene_df) %>%
+  mutate(cluster.color = replace_na(cluster.color, "grey50"),
+         sph_cluster = replace_na(sph_cluster, "not_de"))
+```
+
+```{r}
+
+pls <- map(cts_tc, function(ct){
+  gns <- marker_by_ct[[ct]] %>% pull(gene_short_name)
+  
+  #Issue - "cell type" specificities from scRNA were determined by cluster. If there are two clusters both with the same celltype annotation - they will show up twice here because there are two marker scores
+  
+  gene_marker_scores <- ct_markers %>%
+    filter(cell_type == ct) %>%
+    filter(gene_short_name %in% gns) %>%
+    group_by(gene_short_name) %>% 
+    slice_min(cell_group, n = 1) %>%   #this is the work around for the issue above. It takes the marker score for the cluster with more cells (lower cluster number (i.e. cluster 1 is largest)
+    transmute(gene_short_name = gene_short_name, pseudo_R2 = pseudo_R2, gsn_marker = paste0(gene_short_name, ": scRNA p_R2 ", round(pseudo_R2,3)))
+  
+  counts <- ntd_summary %>% filter(gene_short_name %in% gns) %>%
+    mutate(age = factor(age, levels = c("P30","6mo","17mo"))) %>%
+    left_join(., gene_marker_scores, multiple= "all") %>%
+    arrange(desc(pseudo_R2))
+  # ggplot(counts, aes(x = age, y = mn)) +
+  #   geom_point(aes(color = sex, group = gene_short_name)) +
+  #   facet_grid(rows = vars(gene_short_name), scales = "free_y" ) +
+  #   ylab(glue::glue("logcounts - ", ct, " genes")) +
+  #   geom_errorbar(aes(ymin = mn-std, ymax = mn+std), width = 0.05) +
+  #   scale_y_continuous(limits = c(0,NA)) + 
+  #   geom_smooth(method = "lm", formula = y ~ x, aes( group = gene_short_name, color= cluster.k.7), show.legend = F)
+
+  ggplot(counts, aes(x = age)) +
+    ylab(glue::glue("logcounts - ", ct, " genes")) +
+    geom_errorbar(aes(ymin = mn-st_err, ymax = mn+st_err), width = 0.05) +
+    scale_y_continuous(limits = c(0,NA)) +
+    geom_smooth(method = "lm", formula = y ~ x, aes(y = logcounts, group= sph_cluster, color = sph_cluster)) + 
+    geom_point(aes(y = logcounts, fill = sex), shape = 21, color = "grey80") +
+    scale_color_manual(values = deframe(module_color_df), na.value = "grey50")+
+    facet_wrap(~gsn_marker, ncol = 1, scales = "free_y")
+  
+})
+
+pl_final <- do.call(ggpubr::ggarrange, list(plotlist =pls, ncol = 2))
+
+pdf(here("plots/diff_exp/scrnaseq_tc_ct_marker_expression.pdf"), width = 8)
+pl_final
+dev.off()
+
+
+```
+
+Timecourse table
+```{r}
+ct_markers <- ct_markers_tc
+
+min_r2 <- 0.5 #affects maximum returned, but minimum of n_min_marker will always be returned
+marker_by_ct <- map(cts_tc, function(ct){
+  
+  #for each celltype pull top markers
+  filtered_markers <- ct_markers %>%
+    dplyr::filter(cell_type == ct) %>%
+    dplyr::filter(pseudo_R2 > min_r2) 
+  
+  return(filtered_markers)
+  
+}) %>% setNames(cts_tc)
+
+gene_df <- ct_markers[,c("gene_id","gene_short_name")] %>% unique %>% left_join(de_gene_modules)
+ct_genes <- marker_by_ct %>% bind_rows() %>%  left_join(de_gene_modules)%>% 
+  group_by(cell_type) %>%
+ summarise(n_markers = n(),
+            n_markers_de = sum(!is.na(sph_cluster)))
+
+ct_modules <- map_df(cts_tc, function(ct){
+  df <- marker_by_ct[[ct]] %>% left_join(de_gene_modules) %>% 
+    filter(!is.na(sph_cluster))
+  
+  df_new <- data.frame(
+    cell_type = ct,
+    marker_genes = paste(marker_by_ct[[ct]]$gene_short_name, collapse = ","),
+    de_marker_genes = paste(df$gene_short_name, collapse = ","),
+    de_modules = paste(sort(unique(df$sph_cluster)), collapse = ","))
+})
+
+de_markers_tc <- full_join(ct_genes,ct_modules)
+
 ```
 
 TODO: Now check senescenece genes:
@@ -156,5 +347,12 @@ gns <- senescence_set2$external_gene_name
 counts <- ntd_summary %>% filter(gene_short_name %in% gns) %>% mutate(age = factor(age, levels = c("P30","6mo","17mo")))
   
 ggplot(counts, aes(x = age, y = mn, color = sex)) + geom_point() + facet_grid(rows = vars(gene_short_name) ) + ylab(glue::glue("logcounts - sen set 1 genes")) + geom_errorbar(aes(ymin = mn-std, ymax = mn+std), width = 0.05)
+```
+
+```{r}
+if(!dir.exists(here("results/diff_exp/scRNA_integration/"))) dir.create(here("results/diff_exp/scRNA_integration/"))
+write.csv(de_markers_6mo, here("results/diff_exp/scRNA_integration/scrnaseq_6mo_ct_markers.csv"), row.names = F, quote = F)
+write.csv(de_markers_tc, here("results/diff_exp/scRNA_integration/scrnaseq_tc_ct_markers.csv"), row.names = F, quote = F)
+
 ```
 

@@ -32,7 +32,6 @@ exp_metadata <- read.csv(metadata_path, header = T)
 Read in DESEQ2 object
 ```{r}
 dds <- readRDS(here("data/bulkrna_dds.rds"))
-metadata <- read.csv(metadata_path)
 ```
 
 Read in learned and other expression signatures
@@ -66,12 +65,10 @@ geneid2name <- gene_description[,c("ensembl_gene_id_version", "external_gene_nam
 library(projectR)
 
 vsd <- vst(dds, blind=FALSE)
-vsd_cleaned <- as.matrix(assay(vsd)) %>% as.data.frame() %>% rownames_to_column(var = "ensembl_gene_id_trimmed") %>% left_join(., geneid2name)  %>% drop_na() %>% dplyr::select(-starts_with("ensembl")) %>% filter(!duplicated(external_gene_name)) %>% column_to_rownames(var = "external_gene_name") %>% as.matrix()
+vsd_cleaned <- as.matrix(assay(vsd)) %>% as.data.frame() %>% rownames_to_column(var = "ensembl_gene_id_trimmed") %>% left_join(., geneid2name) %>% drop_na() %>% dplyr::select(-starts_with("ensembl")) %>% filter(!duplicated(external_gene_name)) %>% column_to_rownames(var = "external_gene_name") %>% as.matrix()
 
 set.seed(007)
 proj_res <- projectR(vsd_cleaned, as.matrix(lmmp_gw_clean))
-
-write.csv(proj_res, here("results/NMF/lmmp_projection/bulk_in_tc_lmmp.csv"), quote = F, row.names = T)
 
 proj_long <- proj_res %>% as.data.frame() %>% rownames_to_column(var = "pattern") %>% pivot_longer(!pattern,names_to = "sample_name", values_to = "weight") %>%
   left_join(., exp_metadata)
@@ -82,6 +79,7 @@ proj_long <- proj_long %>% mutate(
                           age == "6mo" ~ 180 ,
                           age == "P30" ~ 30))
 ```
+
 ```{r}
 pattern_names <- colnames(lmmp_gw_clean)
 lm_res <- map_df(pattern_names, function(patt){
@@ -122,9 +120,8 @@ coef_sig_plot_list <- map(terms, function(term){
           
 })
 
-pdf(here("plots/NMF/lmmp_projections/projection_sig_by_term.pdf"), width = 10, height = 6)
 coef_sig_plot_list
-dev.off()
+
 ```
 
 ```{r}
@@ -140,8 +137,9 @@ ggplot(pattern_df, aes(x = mean, y = var_pct)) + geom_point() + ggrepel::geom_te
 
 ```
 
+
 ```{r}
-pl <- ggplot(proj_long) + geom_point(aes(x = age, y = weight, color = sample_name)) + facet_wrap(~pattern, ncol = 5, scales = "free_y")
+#pl <- ggplot(proj_long) + geom_point(aes(x = age, y = weight, color = sample_name)) + facet_wrap(~pattern, ncol = 5, scales = "free_y")
 
 
 pl <- ggplot(proj_long,aes(x = age_numeric, y = weight, group = sex, color = sex))  +
@@ -161,6 +159,130 @@ pl <- ggplot(proj_long,aes(x = age_numeric, y = weight, group = sex, color = sex
 #   theme(axis.text.y = element_blank()) +
 #   geom_smooth(method= "lm")
 
+pl
+```
+
+Changes to pipeline
+
+```{r}
+total_gene_sums <- vsd_cleaned %>% rowSums()
+hist(total_gene_sums)
+
+hist(as.numeric(as.matrix(lmmp_gw_clean)))
+ggplot(data.frame(x = unlist(lmmp_gw_clean))) + geom_histogram(aes(x)) + scale_y_log10()
+
+rowData(dds)[,"ensembl_gene_id_trimmed"] <- rownames(rowData(dds))
+gene_df <- rowData(dds)[,c("external_gene_name","ensembl_gene_id_trimmed")] %>% as.data.frame()
+
+mt_genes_ind <- str_detect(gene_df$external_gene_name, "^mt-") %>% which
+mt_genes <- gene_df[mt_genes_ind,]
+ribo_genes_ind <- str_detect(gene_df$external_gene_name, "^Rps|^Rpl") %>% which()
+ribo_genes <- gene_df[ribo_genes_ind,]
+hemo_genes_ind <- str_detect(gene_df$external_gene_name, "^Hbb|^Hba") %>% which()
+hemo_genes <- gene_df[hemo_genes_ind,]
+
+signal <- sum(assay(dds, "counts"))
+mt_signal <- sum(assay(dds, "counts")[mt_genes_ind,])
+mt_ratio <- 100*(mt_signal/signal)
+ribo_signal <- sum(assay(dds, "counts")[ribo_genes_ind,])
+ribo_ratio <- 100*(ribo_signal/signal)
+
+hemo_signal <- sum(assay(dds, "counts")[hemo_genes_ind,])
+hemo_ratio <- 100*(hemo_signal/signal)
+
+remove_genes_ind <- c(ribo_genes_ind, mt_genes_ind)
+remove_genes_ensembl <- c(ribo_genes$ensembl_gene_id_trimmed, mt_genes$ensembl_gene_id_trimmed)
+keep_genes_ensembl <- gene_df[!(gene_df$ensembl_gene_id_trimmed %in% remove_genes_ensembl),"ensembl_gene_id_trimmed"]
+
+data.frame(mt_ratio, ribo_ratio, hemo_ratio)
+
+```
+
+Together, mitochondrial and ribosomal genes make up ~27% of the counts in the data. Remove this to keep high variance genes for projection
+
+```{r}
+set.seed(007)
+vsd_filtered <- as.matrix(assay(vsd)[keep_genes_ensembl,]) %>% as.data.frame() %>% rownames_to_column(var = "ensembl_gene_id_trimmed") %>% left_join(., geneid2name) %>% drop_na() %>% dplyr::select(-starts_with("ensembl")) %>% filter(!duplicated(external_gene_name)) %>% column_to_rownames(var = "external_gene_name") %>% as.matrix()
+
+proj_res_filtered <- projectR(vsd_filtered, as.matrix(lmmp_gw_clean))
+
+#write.csv(proj_res, here("results/NMF/lmmp_projection/bulk_in_tc_lmmp.csv"), quote = F, row.names = T)
+
+proj_long <- proj_res %>% as.data.frame() %>% rownames_to_column(var = "pattern") %>% pivot_longer(!pattern,names_to = "sample_name", values_to = "weight") %>%
+  left_join(., exp_metadata)
+
+proj_long <- proj_long %>% mutate(
+  age = factor(age, levels = c("P30","6mo","17mo")),
+  age_numeric = case_when(age == "17mo" ~ 510,
+                          age == "6mo" ~ 180 ,
+                          age == "P30" ~ 30))
+
+pattern_var <- rowVars(proj_res_filtered) %>% setNames(pattern_names) %>% enframe(name = "pattern", value = "var")
+pattern_mean <- rowMeans(proj_res_filtered) %>% setNames(pattern_names) %>% enframe(name = "pattern", value = "mean")
+
+pattern_df <- full_join(pattern_mean, pattern_var) %>% mutate(var_pct = var/abs(mean))
+
+
+ggplot(pattern_df, aes(x = mean, y = var)) + geom_point()+ ggrepel::geom_text_repel(aes(label = pattern))
+ggplot(pattern_df, aes(x = mean, y = var_pct)) + geom_point() + ggrepel::geom_text_repel(aes(label = pattern))
+```
+
+Didn't alleviate the problem. Pattern 11 is also a RBC pattern. Remove patterns 7,11,44 before projection
+
+```{r}
+set.seed(007)
+
+gw_filt <- lmmp_gw_clean %>% dplyr::select(-paste0("cellPattern", c(7,11,44)))
+patt_names_filt <- colnames(gw_filt)
+
+
+proj_res_filtered <- projectR(vsd_filtered, as.matrix(gw_filt))
+
+write.csv(proj_res_filtered, here("results/NMF/lmmp_projection/bulk_in_tc_lmmp.csv"), quote = F, row.names = T)
+
+proj_long_filtered <- proj_res_filtered %>% as.data.frame() %>% rownames_to_column(var = "pattern") %>% pivot_longer(!pattern,names_to = "sample_name", values_to = "weight") %>%
+  left_join(., exp_metadata)
+
+proj_long_filtered <- proj_long_filtered %>% mutate(
+  age = factor(age, levels = c("P30","6mo","17mo")),
+  age_numeric = case_when(age == "17mo" ~ 510,
+                          age == "6mo" ~ 180 ,
+                          age == "P30" ~ 30))
+
+pattern_var <- rowVars(proj_res_filtered) %>% setNames(patt_names_filt) %>% enframe(name = "pattern", value = "var")
+pattern_mean <- rowMeans(proj_res_filtered) %>% setNames(patt_names_filt) %>% enframe(name = "pattern", value = "mean")
+
+pattern_df <- full_join(pattern_mean, pattern_var) %>% mutate(var_pct = var/abs(mean))
+
+
+ggplot(pattern_df, aes(x = mean, y = var)) + geom_point()+ ggrepel::geom_text_repel(aes(label = pattern))
+ggplot(pattern_df, aes(x = mean, y = var_pct)) + geom_point() + ggrepel::geom_text_repel(aes(label = pattern))
+
+#pca
+projection_pc <- prcomp(t(proj_res_filtered), scale = T)
+sample_weights <- projection_pc$x %>% as.data.frame() %>% tibble::rownames_to_column(var = "sample_name") %>% left_join(exp_metadata)
+
+sample_umap <- uwot::umap(as.data.frame( projection_pc$x),
+                          n_neighbors = 2) %>% as.data.frame()
+rownames(sample_umap) <- rownames(projection_pc$x)
+colnames(sample_umap) <- c("UMAP1","UMAP2")
+sample_umap <- sample_umap %>% tibble::rownames_to_column(var = "sample_name") %>% left_join(., exp_metadata) 
+
+ggplot(sample_weights, shape = 21, aes(x = PC1, y = PC2, color = age, fill = sex)) + geom_point()
+ggplot(sample_umap, shape = 21, aes(x = UMAP1, y = UMAP2, color = age, fill = sex)) + geom_point()
+```
+
+```{r}
+pl <- ggplot(proj_long_filtered) + geom_point(aes(x = age, y = weight, color = sample_name)) + facet_wrap(~pattern, ncol = 5, scales = "free_y")
+
+
+pl <- ggplot(proj_long_filtered,aes(x = age_numeric, y = weight, group = sex, color = sex))  +
+  stat_summary(fun = mean, geom = "line",position=position_dodge2(width = .3)) + 
+  stat_summary(fun.data = mean_se, geom = "errorbar",position=position_dodge2(width = 0.2), width = .3) +
+  geom_point(size = 0.2, position = position_dodge(width=.3)) +
+  facet_wrap(~pattern, ncol = 5, scales = "free_y") 
+  #theme(axis.text.y = element_blank()) +
+
 if(!dir.exists(here("plots/NMF/lmmp_projections"))){
   dir.create(here("plots/NMF/lmmp_projections"))
 }
@@ -170,22 +292,74 @@ pl
 dev.off()
 ```
 
+```{r}
+pattern_names <- colnames(gw_filt)
+lm_res <- map_df(pattern_names, function(patt){
+  fit <- lm(weight ~ age_numeric, filter(proj_long_filtered, pattern == patt))
+  data.frame(pattern = patt, coef = coefficients(fit)["age_numeric"],
+             pvalue = summary(fit)$coefficients["age_numeric",4])
+}) %>% mutate(padj = min(1, pvalue*length(pattern_names)), 
+              significance = case_when(
+  sign(coef) == 1 & padj < 0.05 ~ "up",
+  sign(coef) == -1 & padj < 0.05 ~ "down",
+  .default = NA
+  ))
+
+ggplot(lm_res, aes(x = pattern, y = coef, fill =significance)) + geom_bar(stat = "identity") + 
+  theme(axis.text.x = element_text(angle =90)) +
+    scale_fill_manual(values = c("up" = "red", "down" = "blue")) +
+  ggtitle("Coefficient for age in pattern_weight ~ numeric(age): 6mo LMMP patterns")
+
+#with sex included - removed term "sexM:age17mo" since sample size = 2
+terms <- c("age_numeric", "sexM" , "age_numeric:sexM")
+lm_res <- map_df(pattern_names, function(patt){
+  
+  fit <- lm(weight ~ age_numeric + sex + age_numeric:sex, filter(proj_long, pattern == patt))
+  
+  map_df(terms, function(term){
+    test <- data.frame(pattern = patt, model_term = term, coef = coefficients(fit)[term],
+             pvalue = summary(fit)$coefficients[term,4])
+  })
+}) %>% mutate(padj = pmin(1, pvalue*length(pattern_names)), 
+              significance = case_when(
+  sign(coef) == 1 & padj < 0.05 ~ "up",
+  sign(coef) == -1 & padj < 0.05 ~ "down",
+  .default = NA
+  ))
+
+coef_sig_plot_list <- map(terms, function(term){
+  res <- lm_res %>% filter(model_term == term )
+  
+  ggplot(res, aes(x = pattern, y = coef, fill =significance)) + geom_bar(stat = "identity") + 
+  theme(axis.text.x = element_text(angle =90)) +
+ # geom_text(data = filter(res, sig == T), aes(x = pattern, y = coef),label = "*", color = "red") +
+  ggtitle(paste0("Coefficient for ", term, " in pattern_weight ~ numeric(age) + sex + numeric(age):sex - 6mo LMMP patterns")) + 
+    scale_fill_manual(values = c("up" = "red", "down" = "blue"))
+          
+})
+
+pdf(here("plots/NMF/lmmp_projections/projection_sig_by_term.pdf"), width = 10, height = 6)
+coef_sig_plot_list
+dev.off()
+
+write.csv(lm_res, here("results/NMF/lmmp_projection/age_pattern_regression_lm.csv"), quote = F, row.names = F)
+```
+Even after removing a few dominating "RBC" patterns, nothing is significantly differentially used after multiple testing correction
 
 ```{r}
-projection_pc <- prcomp(proj_res)
-sample_weights <- projection_pc$rotation %>% as.data.frame() %>% tibble::rownames_to_column(var = "sample_name") %>% left_join(metadata)
+#nominally significant
+lm_res %>% filter(pvalue < 0.05) %>% arrange(desc(coef))
 
-sample_umap <- uwot::umap(as.data.frame( projection_pc$rotation),
-                          n_neighbors = 2) %>% as.data.frame()
-rownames(sample_umap) <- rownames(projection_pc$rotation)
-colnames(sample_umap) <- c("UMAP1","UMAP2")
-sample_umap <- sample_umap %>% tibble::rownames_to_column(var = "sample_name") %>% left_join(., metadata) 
+m_samples <- exp_metadata %>% filter(sex == "M") %>% pull(sample_name)
+f_samples <- exp_metadata %>% filter(sex == "F") %>% pull(sample_name)
 
-ggplot(sample_weights, shape = 21, aes(x = PC1, y = PC2, color = age, fill = sex)) + geom_point()
-ggplot(sample_umap, shape = 21, aes(x = UMAP1, y = UMAP2, color = age, fill = sex)) + geom_point()
+m_exp <- vsd_filtered %>% as.data.frame() %>% dplyr::select(all_of(m_samples))
+f_exp <- vsd_filtered %>% as.data.frame() %>% dplyr::select(all_of(f_samples))
 
+
+library(projectR)
+test<- projectionDriveR(m_exp, f_exp, gw_filt, pattern_name = "cellPattern41", normalize_pattern = F)
 ```
-
 
 Projection of bulk signatures with lmmp scRNA. "Where are these genes expressed"
 
