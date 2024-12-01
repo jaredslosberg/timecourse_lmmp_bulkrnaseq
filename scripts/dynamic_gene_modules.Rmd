@@ -34,7 +34,7 @@ Differential expression on relevant conditions
 ```{r}
 dds <- readRDS(here("data/bulkrna_dds.rds"))
 
-test_names <- paste0("age_",c("6mo","17mo"),"_vs_P30")
+test_names <- c("age_6mo_vs_P30","age_17mo_vs_P30","age_17mo_vs_6mo")
 
 res_list <- map(test_names, function(name){
   tbl <- read.csv(paste0(here("results/diff_exp/"), name,".csv"), row.names = 1)
@@ -78,8 +78,13 @@ gene_ids <- geneid2name %>% mutate(ensemblgene_id = ensembl_gene_id_version)
 pcut <- 0.05
 #all genes that are DE in either condition
 diff_genes <-res_df %>% filter(padj < pcut) %>% pull(ensemblgene_id) %>% unique()
+clean_genes <- rowData(dds)[,c("external_gene_name", "ensembl_gene_id_trimmed")] %>% as.data.frame() %>%
+  filter(!str_detect(external_gene_name, "^Gm[0-9]+|Rik$|^Ighg|^Ighv|^Igk|^Igl|^Rps|^Rpl")) %>% #ribosomal, pseudogene, rik, immunoglobin
+  pull(ensembl_gene_id_trimmed)
 
-res_df_filtered <- res_df %>% filter(ensemblgene_id %in% diff_genes)
+res_df_filtered <- res_df %>% 
+  filter(ensemblgene_id %in% diff_genes & ensemblgene_id %in% clean_genes )
+
 res_df_filtered_wide <- res_df_filtered  %>%
   dplyr::select(c(ensemblgene_id, padj, nlog10p, condition, log2FoldChange)) %>%
   pivot_wider(names_from = condition, values_from = c(padj, log2FoldChange, nlog10p)) %>% 
@@ -124,7 +129,7 @@ genes_both_sig <- res_df_filtered_wide %>% filter(both_sig == T) %>% pull(ensemb
 
 ```{r}
 #Detect when genes have 0 variance for at least one timepoint, these LFC are estimates and magnitude dominates
-counts_long <- assay(dds)[diff_genes,] %>% as.data.frame() %>% rownames_to_column(var = "ensemblgene_id") %>%
+counts_long <- assay(dds)[intersect(diff_genes, clean_genes),] %>% as.data.frame() %>% rownames_to_column(var = "ensemblgene_id") %>%
   pivot_longer(!ensemblgene_id, names_to = "sample_name", values_to = "count") %>% 
   separate(sample_name, c("age","sex","batch"), sep = "-", remove = F) 
 
@@ -346,7 +351,7 @@ scaled_log2fc_long <- scaled_log2fc_mat %>% as.data.frame() %>%
     comp == "log2FoldChange_age_17mo_vs_P30" ~ "17mo",
     ), levels = c("P30","6mo","17mo"))) %>%
   full_join(cluster_df) %>%
-  mutate(transparency = sqrt(1/n)) %>%
+  mutate(transparency = 1/n) %>%
   mutate(transparency_corrected = pmin(1, transparency))
 
 p2 <- ggplot(scaled_log2fc_long, aes( x = condition, y = scaled_log2fc, group = ensemblgene_id, alpha = transparency_corrected)) + geom_line(color = "black") + facet_wrap(~cluster_title, scales = "free_y") + ylab("scaled log2FC estimates relative to P30") + ggtitle("clustered on cosine distance of LFC")

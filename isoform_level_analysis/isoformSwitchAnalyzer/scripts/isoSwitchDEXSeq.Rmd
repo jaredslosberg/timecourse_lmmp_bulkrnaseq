@@ -1,0 +1,84 @@
+---
+title: "isoform switch"
+author: "Jared Slosberg"
+date: "6/22/2023"
+output: html_document
+---
+
+Script needs to be run with R = 4.2. Use /opt/R/4.2.3/bin/R with libraries @ "/home/jared/R/x86_64-pc-linux-gnu-library/4.2".
+Singularity container with isoformAnalysis.yml
+Saturn = 1.7.3
+IsoformSwitchAnalyzer = 2.1.2
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+#library(tidyverse)
+library(here)
+library(IsoformSwitchAnalyzeR)
+```
+From the isoform quantification IsoformSwitchAnalyzeR performs five high-level tasks:
+
+- Statistical identification of isoform switches.
+
+- Integration of a wide range of (predicted) annotations for the isoforms involved in the identified switches (e.g. protein domains).
+
+- Identification of which isoforms have a predicited functional consequnce (e.g. loss/gain of protein domain).
+
+- Visualization of predicted consequences of the isoform switches for individual genes
+
+- Analysis of genome wide patterns in both switch consequences and alternative splicing.
+```{r}
+# Load example data and pre-filter
+data("exampleSwitchList")
+exampleSwitchList <- preFilter(exampleSwitchList) # preFilter to remove lowly expressed features
+#> The filtering removed 55 ( 21.24% of ) transcripts. There is now 204 isoforms left
+
+# Perform test
+exampleSwitchListAnalyzed <- isoformSwitchTestDEXSeq(
+    switchAnalyzeRlist = exampleSwitchList,
+    reduceToSwitchingGenes=TRUE
+)
+#> Step 1 of 2: Testing each pairwise comparisons with DEXSeq (this might be a bit slow)...
+#>     Estimated run time is: 1 min
+#> Step 2 of 2: Integrating result into switchAnalyzeRlist...
+#>     Isoform switch analysis was performed for 60 gene comparisons (100%).
+#> Total runtime: 0.14 min
+#> Done
+
+# Summarize switching features
+extractSwitchSummary(exampleSwitchListAnalyzed)
+#>            Comparison nrIsoforms nrSwitches nrGenes
+#> 1 hESC vs Fibroblasts         82         58      38
+```
+
+
+
+```{r}
+metadata <- read.csv(here("metadata_merged.csv")) %>% filter(sample_name != "17mo-M-1")
+design <- metadata %>% transmute(sampleID = sample_name, condition = age) %>% mutate(
+  condition = paste0("age_",condition)
+)
+
+kallistoQuant <- importIsoformExpression(
+    parentDir = here("kallisto_out_merged/"),
+    addIsofomIdAsColumn = TRUE
+)
+
+aSwitchList <- importRdata(
+    isoformCountMatrix   = kallistoQuant$counts,
+    isoformRepExpression = kallistoQuant$abundance,
+    designMatrix         = design, 
+    isoformExonAnnoation = here("isoform_level_analysis/gencode.vM27.annotation.gtf"),
+    showProgress = T
+)
+```
+
+```{r}
+aSwitchList <- preFilter(aSwitchList, geneExpressionCutoff = .1, isoformExpressionCutoff = 0, removeSingleIsoformGenes = T)
+
+SwitchRes <- isoformSwitchTestDEXSeq(aSwitchList, reduceToSwitchingGenes = F, reduceFurtherToGenesWithConsequencePotential = F)
+saveRDS(SwitchRes, here("isoform_level_analysis/isoformSwitchAnalyzer/DEXSeq/DEXSeq_res_all.rds"))
+```

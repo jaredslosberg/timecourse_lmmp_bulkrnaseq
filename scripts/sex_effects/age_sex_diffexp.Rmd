@@ -1,0 +1,93 @@
+---
+title: "Untitled"
+author: "Jared Slosberg"
+date: "6/6/2023"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(DESeq2)
+library(here)
+```
+
+
+```{r}
+dds <- readRDS(here("data/bulkrna_dds.rds"))
+gene_df <- as.data.frame(rowData(dds)[,c("external_gene_name","ensembl_gene_id_trimmed")])
+colData(dds)
+
+metadata <- read.csv(here("metadata_merged.csv"))
+```
+
+Get biomart annotations for gene short names
+```{r}
+library(biomaRt)
+#get gene names, make sure to use the right ensembl archive for genome used for alignment
+#listMarts() 
+ensembl <- useMart("ensembl", host = "ensembl.org")
+datasets <- listDatasets(ensembl)
+ensembl <- useDataset("mmusculus_gene_ensembl",mart=ensembl)
+
+gene_description <- getBM(attributes = c("ensembl_gene_id_version","external_gene_name","description","chromosome_name","start_position","end_position"),
+                   filters = "ensembl_gene_id", values =rownames(dds),  mart = ensembl)
+
+geneid2name <- gene_description[,c("ensembl_gene_id_version", "external_gene_name")] %>% 
+  mutate(ensembl_gene_id_trimmed = str_split_fixed(ensembl_gene_id_version, "\\.", 2) %>% .[,1])
+
+gene_ids <- geneid2name %>% mutate(ensemblgene_id = ensembl_gene_id_version)
+
+```
+
+```{r}
+dds@design <- ~ age*sex + library_RIN + rep
+colData(dds)$sex <- factor(colData(dds)$sex, levels = c("M","F"))
+dds <- DESeq(dds)
+
+```
+
+```{r}
+res_sex <- results(dds, name = "sex_F_vs_M")
+res_sex %>% as.data.frame() %>% rownames_to_column("ensembl_gene_id_trimmed") %>% left_join(gene_description) %>% filter(padj < 0.05) %>% head
+summary(res_sex)
+
+res_sex_6mo <- results(dds, name = "age6mo.sexF")
+res_sex_6mo %>% as.data.frame() %>% rownames_to_column("ensembl_gene_id_trimmed") %>% left_join(gene_description) %>% filter(padj < 0.05) %>% head
+summary(res_sex_6mo)
+
+res_sex_17mo <- results(dds, name = "age17mo.sexF")
+res_sex_17mo %>% as.data.frame() %>% rownames_to_column("ensembl_gene_id_trimmed") %>% left_join(gene_description) %>% filter(padj < 0.05) %>% head
+summary(res_sex_17mo)
+```
+```{r}
+gene_description %>% head
+
+chrom_sums <- assay(dds) %>% as.matrix() %>% as.data.frame() %>% rownames_to_column(var = "ensembl_gene_id_trimmed") %>% left_join(gene_description[,c("ensembl_gene_id_trimmed","chromosome_name")]) %>% pivot_longer(!c(ensembl_gene_id_trimmed, chromosome_name), names_to = "sample_name", values_to = "counts") %>% left_join(metadata) %>% group_by(sex,sample_name, chromosome_name) %>% summarise(sum_counts = sum(counts)) %>% mutate(chromosome_name = factor(chromosome_name, levels = c(1:19, "MT", "X","Y")))
+
+ggplot(chrom_sums) + geom_col(aes(x = chromosome_name, y = sum_counts, fill = sex, group = sex))
+
+chrom_sums_sex <- chrom_sums %>% group_by(sample_name) %>% filter(chromosome_name %in% c("X","Y")) %>% pivot_wider(names_from = chromosome_name, values_from = sum_counts) %>% mutate(xy_ratio = X/Y)
+
+
+ggplot(chrom_sums_sex) + geom_col(aes(sample_name, y = Y, fill = sex)) + ylab("counts mapped to Y chromosome") + theme(axis.text.x = element_text(angle = 90))
+ggplot(chrom_sums_sex) + geom_col(aes(sample_name, y = xy_ratio, fill = sex)) + ylab("ratio of X counts / Y counts") + theme(axis.text.x = element_text(angle = 90))
+```
+```{r}
+gene_df <- rowData(dds)[,c("external_gene_name", "ensembl_gene_id_trimmed")] %>% as.data.frame() %>% transmute(external_gene_name = external_gene_name, ensembl_gene_id = ensembl_gene_id_trimmed)
+
+res <- results(dds, contrast=c("age", "17mo", "6mo"), alpha=0.1, pAdjustMethod="BH", parallel=TRUE, tidy = F) %>% as.data.frame() %>%
+  rownames_to_column(var = "ensembl_gene_id") %>%
+  left_join(., gene_df, by= "ensembl_gene_id") %>%
+  relocate(external_gene_name) %>%
+  arrange(desc(log2FoldChange))
+
+```
+
+```{r}
+saveRDS(dds, here("data/bulkrna_dds_sex.rds"))
+```
+

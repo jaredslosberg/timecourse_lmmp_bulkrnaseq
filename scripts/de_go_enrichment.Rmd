@@ -5,11 +5,14 @@ date: "4/24/2023"
 output: html_document
 ---
 
+GO on de gene modules
+GSEA on differentially expressed genes, ranked by shrunken log2fc
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
 ```{r}
+library(renv)
 library(clusterProfiler)
 library(dplyr)
 library(org.Mm.eg.db)
@@ -22,6 +25,8 @@ library(tidyverse)
 library(biomaRt)
 library(RColorBrewer)
 library(DESeq2)
+
+if(!interactive()) renv::restore(here("renv.lock"))
 ```
 
 ```{r}

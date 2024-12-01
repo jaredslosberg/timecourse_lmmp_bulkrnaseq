@@ -1,0 +1,276 @@
+---
+title: "go_enrichment"
+author: "Jared Slosberg"
+date: "4/24/2023"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(clusterProfiler)
+library(dplyr)
+library(org.Mm.eg.db)
+library(DOSE)
+library(ggplot2)
+library(grid)
+library(gridExtra)
+library(here)
+library(tidyverse)
+library(biomaRt)
+library(RColorBrewer)
+library(DESeq2)
+```
+
+```{r}
+dds <- readRDS(here("data/bulkrna_dds_sex.rds"))
+```
+
+
+```{r}
+dot_plot <- function(ontology_res, n_terms = 15, style = "enrichplot"){
+  or <- as.data.frame(ontology_res) 
+  or$generatio_num <- sapply(or$GeneRatio, function(x){eval(parse(text = x))})
+  
+  or_filt <- or %>% slice_min(n = n_terms,order_by = p.adjust, by = ONTOLOGY, with_ties = F)
+  ggplot(or_filt, aes(x = generatio_num, y = Description, fill = p.adjust, color = (p.adjust < 0.05))) +
+    geom_point(shape = 21) +
+    scale_fill_gradientn(colors = c("red","blue")) +
+    scale_color_manual(values = c("white","black"))
+}
+
+dot_plot_gsea <- function(ontology_res, n_terms = 15, style = "enrichplot"){
+  or <- as.data.frame(ontology_res) 
+
+  or_filt <- or %>% slice_min(n = n_terms,order_by = p.adjust, by = ONTOLOGY, with_ties = F)
+  ggplot(or_filt, aes(x = enrichmentScore, y = Description, fill = p.adjust, color = (p.adjust < 0.05))) +
+    geom_point(shape = 21) +
+    scale_fill_gradientn(colors = c("red","blue")) +
+    scale_color_manual(values = c("white","black"))
+}
+```
+
+
+```{r}
+#load all DE genes, rank by x
+testnames <- resultsNames(dds)[-c(1)]
+gene_df <- rowData(dds)[,c("external_gene_name", "ensembl_gene_id_trimmed")] %>% as.data.frame() %>% transmute(external_gene_name = external_gene_name, ensembl_gene_id = ensembl_gene_id_trimmed)
+
+de_res <- map(testnames, function(comp){
+  res <- results(dds, contrast=c("age", "17mo", "6mo"), alpha=0.1, pAdjustMethod="BH", parallel=TRUE, tidy = F) %>% as.data.frame() %>%
+  rownames_to_column(var = "ensembl_gene_id") %>%
+  left_join(., gene_df, by= "ensembl_gene_id") %>%
+  relocate(external_gene_name) %>%
+  arrange(desc(log2FoldChange))
+  }) %>%
+  setNames(testnames)
+
+```
+
+```{r}
+  library(colorspace)
+
+
+if(!dir.exists(here("results/diff_exp/sex_effects/de_gsea/"))) dir.create(here("results/diff_exp/sex_effects/de_gsea/"))
+if(!dir.exists(here("plots/diff_exp/sex_effects/de_gsea/"))) dir.create(here("plots/diff_exp/sex_effects/de_gsea/"))
+
+gsea_results <- map(testnames, function(comp){
+
+  print(comp)
+
+  #de_res <- read.csv(here(paste0("results/diff_exp/",comp,".csv")))
+  #de_genes <- de_res %>% filter(padj < 0.05) %>% dplyr::select(external_gene_name, ensemblgene_id)
+  
+  #all genes (for gsea)
+  res_shrink <- lfcShrink(dds, coef = comp, type="apeglm")
+
+  #genes <- de_res[[comp]][,c("gene_id_trimmed","estimate")] %>% deframe() %>% sort(., decreasing = T)
+  genes <- res_shrink %>% as.data.frame() %>%
+    dplyr::select(log2FoldChange) %>% 
+    arrange(desc(log2FoldChange)) %>% 
+    rownames_to_column(var = "ensemblgene_id") %>%
+    deframe()
+  
+  print("Gene ranks prepped... Running GSEA")
+  #gene set enrichment analysis
+  res <- gseGO(geneList     = genes,
+                OrgDb        = org.Mm.eg.db,
+                ont          = "ALL",
+                keyType      = "ENSEMBL",
+                minGSSize    = 10,
+                maxGSSize    = 500,
+                pvalueCutoff = 1,
+                verbose      = TRUE)
+
+  res %>% as.data.frame %>% group_by(ONTOLOGY) %>%
+    filter(p.adjust < 0.05) %>%
+    add_count(name = "n_significant") %>% 
+    dplyr::select(ONTOLOGY, n_significant) %>%
+    unique()
+  res_read <- setReadable(res, 'org.Mm.eg.db')
+
+  
+  pdf(here(paste0("plots/diff_exp/sex_effects/de_gsea/", comp, ".pdf")), width = 20, height = 20)
+  print(dot_plot_gsea(res, n_terms=15) + facet_grid(ONTOLOGY~., scales = "free")  +
+    ggtitle(paste0("Subset of GO enriched terms for ", comp)))
+
+  p1 <- cnetplot(res_read, foldChange=genes, showCategory = 10)
+  p2 <- heatplot((res_read), foldChange = genes) +
+    scale_fill_continuous_divergingx(palette = 'RdBu', mid = 0, rev = T)
+  res_pw <- enrichplot::pairwise_termsim(res)
+  p3 <- emapplot(res_pw)
+  p4 <- enrichplot::upsetplot(res)
+  
+  print(p1)
+  print(p2)
+  print(p3)
+  print(p4)
+
+dev.off()
+
+  summary <- as.data.frame(res) %>%
+    dplyr::filter(ONTOLOGY == "BP") %>%
+    dplyr::select(ONTOLOGY, Description, p.adjust, qvalues, setSize)
+
+  colnames(summary)[colnames(summary) == "Description"] <- paste0("Description - GO Terms for ", comp)
+
+
+  sub1 <- summary[1:55,]
+  sub2 <- summary[56:110,]
+  grid.newpage()
+  g1 <- gridExtra::grid.table(sub1,theme=ttheme_minimal(base_size = 8))
+  grid.newpage()
+  print("test")
+  g2 <- gridExtra::grid.table(sub2,theme=ttheme_minimal(base_size = 8))
+
+
+  dev.off()
+
+  write.csv(x = as.data.frame(res), here(paste0("results/diff_exp/sex_effects/de_gsea/",comp,".csv")))
+  return(res)
+})
+
+#17mo.vs.6mo
+dds$age <- factor(dds$age, levels = c("6mo", "17mo","P30"))
+dds <- DESeq(dds)
+testnames <- c("age_17mo_vs_6mo", "age17mo.sexF") %>% setNames(c("age_17mo_vs_6mo", "age17mo_vs_6mo.sexF"))
+gsea_results <- map(names(testnames), function(comp_name){
+
+  print(comp_name)
+  comp <- testnames[[comp_name]]
+
+  #de_res <- read.csv(here(paste0("results/diff_exp/",comp,".csv")))
+  #de_genes <- de_res %>% filter(padj < 0.05) %>% dplyr::select(external_gene_name, ensemblgene_id)
+  
+  
+  #all genes (for gsea)
+  res_shrink <- lfcShrink(dds, coef = comp, type="apeglm")
+
+  #genes <- de_res[[comp]][,c("gene_id_trimmed","estimate")] %>% deframe() %>% sort(., decreasing = T)
+  genes <- res_shrink %>% as.data.frame() %>%
+    dplyr::select(log2FoldChange) %>% 
+    arrange(desc(log2FoldChange)) %>% 
+    rownames_to_column(var = "ensemblgene_id") %>%
+    deframe()
+  
+  print("Gene ranks prepped... Running GSEA")
+  #gene set enrichment analysis
+  res <- gseGO(geneList     = genes,
+                OrgDb        = org.Mm.eg.db,
+                ont          = "ALL",
+                keyType      = "ENSEMBL",
+                minGSSize    = 10,
+                maxGSSize    = 500,
+                pvalueCutoff = 1,
+                verbose      = TRUE)
+
+  res %>% as.data.frame %>% group_by(ONTOLOGY) %>%
+    filter(p.adjust < 0.05) %>%
+    add_count(name = "n_significant") %>% 
+    dplyr::select(ONTOLOGY, n_significant) %>%
+    unique()
+  res_read <- setReadable(res, 'org.Mm.eg.db')
+
+  
+  pdf(here(paste0("plots/diff_exp/sex_effects/de_gsea/", comp_name, ".pdf")), width = 20, height = 20)
+  print(dot_plot_gsea(res, n_terms=15) + facet_grid(ONTOLOGY~., scales = "free")  +
+    ggtitle(paste0("Subset of GO enriched terms for ", comp_name)))
+
+  p1 <- cnetplot(res_read, foldChange=genes, showCategory = 10)
+  p2 <- heatplot((res_read), foldChange = genes) +
+    scale_fill_continuous_divergingx(palette = 'RdBu', mid = 0, rev = T)
+  res_pw <- enrichplot::pairwise_termsim(res)
+  p3 <- emapplot(res_pw)
+  p4 <- enrichplot::upsetplot(res)
+  
+  print(p1)
+  print(p2)
+  print(p3)
+  print(p4)
+
+dev.off()
+
+  summary <- as.data.frame(res) %>%
+    dplyr::filter(ONTOLOGY == "BP") %>%
+    dplyr::select(ONTOLOGY, Description, p.adjust, qvalues, setSize)
+
+  colnames(summary)[colnames(summary) == "Description"] <- paste0("Description - GO Terms for ", comp_name)
+
+
+  sub1 <- summary[1:55,]
+  sub2 <- summary[56:110,]
+  grid.newpage()
+  g1 <- gridExtra::grid.table(sub1,theme=ttheme_minimal(base_size = 8))
+  grid.newpage()
+  print("test")
+  g2 <- gridExtra::grid.table(sub2,theme=ttheme_minimal(base_size = 8))
+
+
+  dev.off()
+
+  write.csv(x = as.data.frame(res), here(paste0("results/diff_exp/sex_effects/de_gsea/",comp_name,".csv")))
+  return(res)
+})
+
+```
+
+
+```{r, eval = F}
+metadata <- read.csv(here("metadata_merged.csv"))
+
+#17mo_vs_6mo.sexF
+synapse_genes <- res_read %>% filter(p.adjust < 0.1) %>% filter(str_detect(Description, "synap")) %>% as.data.frame() %>%  pull(core_enrichment) %>% paste(collapse = "/") %>% str_split("/") %>% unlist() %>% unique 
+
+ntd <- DESeq2::normTransform(dds) %>% assay
+gene_df <- rowData(dds)[,c("external_gene_name", "ensembl_gene_id_trimmed")] %>% as.data.frame() %>% drop_na()
+gene_df_synapse <- gene_df %>% filter(external_gene_name %in% synapse_genes)
+ntd_sub <- ntd[gene_df_synapse$ensembl_gene_id_trimmed,]
+
+ntd_long_sub <- ntd_sub %>% as.data.frame() %>% rownames_to_column(var = "ensembl_gene_id_trimmed") %>% full_join(gene_df) %>% dplyr::select(-ensembl_gene_id_trimmed) %>% pivot_longer(!external_gene_name, names_to = "sample_name", values_to = "counts") %>% left_join(metadata)
+
+ntd_long_sub<- ntd_long_sub[1:10000,] %>% group_by(external_gene_name,age) %>% mutate(mn = mean(counts), std_err = sd(counts)/sqrt(n()))
+
+ggplot(ntd_long_sub[1:64,],aes(x = age, y = counts)) + geom_point(aes(color = sex)) +
+  facet_wrap(~external_gene_name, scales = "free_y") +
+  geom_smooth(aes(color = sex), method = "lm") +
+  stat_summary(fun = mean, geom = "line",position=position_dodge2(width = .3)) + 
+  geom_errorbar(aes(ymin = mn-std_err, ymax = mn+std_err), width =.5)
+
+heatmap(ntd_sub)
+
+respirasome_genes <- res_read %>% filter(p.adjust < 0.1) %>% filter(str_detect(Description, "respirasome")) %>% as.data.frame() %>%  pull(core_enrichment) %>% paste(collapse = "/") %>% str_split("/") %>% unlist() %>% unique 
+
+ensembl <- useMart("ensembl", host = "useast.ensembl.org")
+datasets <- listDatasets(ensembl)
+ensembl <- useDataset("mmusculus_gene_ensembl",mart=ensembl)
+
+all_resp_genes <- getBM(attributes=c('mgi_symbol', 'ensembl_gene_id', 'go_id', "name_1006"),
+                   filters = 'go', values = "GO:0070469" , mart = ensembl) %>% filter(go_id == "GO:0070469") %>%
+  mutate(go_description = name_1006) %>%
+  dplyr::select(-name_1006) %>% 
+  pull(mgi_symbol)
+
+```
+

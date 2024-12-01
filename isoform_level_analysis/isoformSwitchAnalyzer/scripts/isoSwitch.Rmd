@@ -1,0 +1,128 @@
+---
+title: "isoform switch"
+author: "Jared Slosberg"
+date: "6/22/2023"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+#library(tidyverse)
+library(here)
+library(IsoformSwitchAnalyzeR)
+```
+From the isoform quantification IsoformSwitchAnalyzeR performs five high-level tasks:
+
+- Statistical identification of isoform switches.
+
+- Integration of a wide range of (predicted) annotations for the isoforms involved in the identified switches (e.g. protein domains).
+
+- Identification of which isoforms have a predicited functional consequnce (e.g. loss/gain of protein domain).
+
+- Visualization of predicted consequences of the isoform switches for individual genes
+
+- Analysis of genome wide patterns in both switch consequences and alternative splicing.
+```{r}
+salmonQuant <- importIsoformExpression(
+    parentDir = system.file("extdata/",package="IsoformSwitchAnalyzeR")
+)
+
+head(salmonQuant$abundance, 2)
+
+```
+
+```{r}
+myDesign <- data.frame(
+    sampleID = colnames(salmonQuant$abundance)[-1],
+    condition = gsub('_.*', '', colnames(salmonQuant$abundance)[-1])
+)
+myDesign
+```
+
+```{r}
+aSwitchList <- importRdata(
+    isoformCountMatrix   = salmonQuant$counts,
+    isoformRepExpression = salmonQuant$abundance,
+    designMatrix         = myDesign,
+    isoformExonAnnoation = system.file("extdata/example.gtf.gz"             , package="IsoformSwitchAnalyzeR"),
+    isoformNtFasta       = system.file("extdata/example_isoform_nt.fasta.gz", package="IsoformSwitchAnalyzeR"),
+    fixStringTieAnnotationProblem = TRUE,
+    showProgress = FALSE
+)
+```
+
+```{r}
+### load example data
+data("exampleSwitchList")
+
+### Subset for quick runtime
+exampleSwitchList <- subsetSwitchAnalyzeRlist(
+    switchAnalyzeRlist = exampleSwitchList,
+    subset = abs(exampleSwitchList$isoformFeatures$dIF) > 0.4
+)
+
+### Print summary of switchAnalyzeRlist
+summary(exampleSwitchList)
+#> This switchAnalyzeRlist list contains:
+#>  20 isoforms from 12 genes
+#>  1 comparison from 2 conditions (in total 6 samples)
+#> 
+#> Feature analyzed:
+#> [1] "ORFs, ntSequence"
+#> 
+#> 
+
+exampleSwitchList <- isoformSwitchAnalysisPart1(
+    switchAnalyzeRlist   = exampleSwitchList,
+    # pathToOutput = 'path/to/where/output/should/be/'
+    outputSequences      = FALSE, # change to TRUE whan analyzing your own data 
+    prepareForWebServers = FALSE  # change to TRUE if you will use webservers for external sequence analysis
+)
+
+extractSwitchSummary( exampleSwitchList )
+
+exampleSwitchList <- isoformSwitchAnalysisPart2(
+  switchAnalyzeRlist        = exampleSwitchList, 
+  n                         = 10,    # if plotting was enabled, it would only output the top 10 switches
+  removeNoncodinORFs        = TRUE,
+  pathToCPC2resultFile      = system.file("extdata/cpc2_result.txt"         , package = "IsoformSwitchAnalyzeR"),
+  pathToPFAMresultFile      = system.file("extdata/pfam_results.txt"        , package = "IsoformSwitchAnalyzeR"),
+  pathToIUPred2AresultFile  = system.file("extdata/iupred2a_result.txt.gz"  , package = "IsoformSwitchAnalyzeR"),
+  pathToSignalPresultFile   = system.file("extdata/signalP_results.txt"     , package = "IsoformSwitchAnalyzeR"),
+  outputPlots               = FALSE  # keeps the function from outputting the plots from this example
+)
+```
+
+
+
+```{r}
+metadata <- read.csv(here("metadata_merged.csv")) %>% filter(sample_name != "17mo-M-1")
+design <- metadata %>% transmute(sampleID = sample_name, condition = age)
+
+kallistoQuant <- importIsoformExpression(
+    parentDir = here("kallisto_out_merged/"),
+    addIsofomIdAsColumn = TRUE
+)
+
+aSwitchList <- importRdata(
+    isoformCountMatrix   = kallistoQuant$counts,
+    isoformRepExpression = kallistoQuant$abundance,
+    designMatrix         = design, 
+    isoformExonAnnoation = here("isoform_level_analysis/gencode.vM27.annotation.gtf"),
+    showProgress = T
+)
+```
+```{r}
+aSwitchList <- preFilter(aSwitchList, geneExpressionCutoff = 1, isoformExpressionCutoff = 0, removeSingleIsoformGenes = T)
+
+SwitchRes <- isoformSwitchTestDEXSeq(aSwitchList)
+```
+```{r}
+
+cuff_dir <- here("isoform_level_analysis/cufflinks/output_corrected/")
+SwitchListCufflinks <- importCufflinksFiles(pathToGTF = paste0(""))
+```
+

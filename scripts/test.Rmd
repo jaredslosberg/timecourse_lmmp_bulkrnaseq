@@ -1,0 +1,40 @@
+---
+title: "go_enrichment"
+author: "Jared Slosberg"
+date: "4/24/2023"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+
+library(here)
+library(tidyverse)
+library(DESeq2)
+
+
+```
+
+```{r}
+dds <- readRDS(here("data/bulkrna_dds.rds"))
+```
+
+```{r}
+library(renv)
+setwd(here())
+here()
+
+.libPaths()
+```
+
+```{r}
+  
+  #all genes (for gsea)
+  res_shrink <- lfcShrink(dds, coef = "age_17mo_vs_P30", type="apeglm")
+
+head(res_shrink)
+
+```
