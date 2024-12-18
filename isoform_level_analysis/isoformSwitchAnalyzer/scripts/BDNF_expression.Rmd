@@ -5,7 +5,8 @@ date: "6/22/2023"
 output: html_document
 ---
 
-Script needs to be run with R = 4.2. Use /opt/R/4.2.3/bin/R with libraries @ "/home/jared/R/x86_64-pc-linux-gnu-library/4.2".
+Script needs to be run with R = 4.2. 
+Use /opt/R/4.2.3/bin/R with libraries @ "/home/jared/R/x86_64-pc-linux-gnu-library/4.2".
 Singularity container with isoformAnalysis.yml
 Saturn = 1.7.3
 IsoformSwitchAnalyzer = 2.1.2
@@ -15,7 +16,7 @@ IsoformSwitchAnalyzer = 2.1.2
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-```{r}
+```{r, message = F}
 #library(tidyverse)
 library(here)
 library(IsoformSwitchAnalyzeR)
@@ -33,40 +34,11 @@ From the isoform quantification IsoformSwitchAnalyzeR performs five high-level t
 - Visualization of predicted consequences of the isoform switches for individual genes
 
 - Analysis of genome wide patterns in both switch consequences and alternative splicing.
-```{r}
-# Load example data and pre-filter
-data("exampleSwitchList")
-exampleSwitchList <- preFilter(exampleSwitchList) # preFilter to remove lowly expressed features
-#> The filtering removed 55 ( 21.24% of ) transcripts. There is now 204 isoforms left
-
-# Perform test
-exampleSwitchListAnalyzed <- isoformSwitchTestDEXSeq(
-    switchAnalyzeRlist = exampleSwitchList,
-    reduceToSwitchingGenes=TRUE
-)
-#> Step 1 of 2: Testing each pairwise comparisons with DEXSeq (this might be a bit slow)...
-#>     Estimated run time is: 1 min
-#> Step 2 of 2: Integrating result into switchAnalyzeRlist...
-#>     Isoform switch analysis was performed for 60 gene comparisons (100%).
-#> Total runtime: 0.14 min
-#> Done
-
-# Summarize switching features
-extractSwitchSummary(exampleSwitchListAnalyzed)
-#>            Comparison nrIsoforms nrSwitches nrGenes
-#> 1 hESC vs Fibroblasts         82         58      38
-```
-
 
 
 ```{r}
 metadata <- read.csv(here("metadata_merged.csv")) %>% filter(sample_name != "17mo-M-1")
 design <- metadata %>% transmute(sampleID = sample_name, condition = age) %>% mutate(
-  condition = paste0("age_",condition)
-)
-
-metadata_filt <- metadata %>% filter(age == "6mo")
-design_filt <- metadata_filt %>% transmute(sampleID = sample_name, condition = age) %>% mutate(
   condition = paste0("age_",condition)
 )
 
@@ -86,7 +58,7 @@ aSwitchList <- importRdata(
     showProgress = T
 )
 ```
-
+Differential testing and downstream isoform fraction comparisons
 ```{r}
 
 #lowered geneExpressionCutoff to include BDNF
@@ -94,8 +66,10 @@ aSwitchList_filt <- preFilter(aSwitchList, geneExpressionCutoff = 0.28, isoformE
 
 SwitchRes <- isoformSwitchTestDEXSeq(aSwitchList_filt, reduceToSwitchingGenes = F)
 
-#saveRDS(SwitchRes, here("isoform_level_analysis/isoformSwitchAnalyzer/DEXSeq/DEXSeq_res.rds"))
+saveRDS(SwitchRes, here("isoform_level_analysis/isoformSwitchAnalyzer/DEXSeq/DEXSeq_res.rds"))
 ```
+
+Prepare and plot isoform fractions
 ```{r}
 condition_list <- list("17mo_vs_P30" = c("cond1" = "age_17mo", "cond2" = "age_P30"),
                        "17mo_vs_6mo" = c("cond1" = "age_17mo", "cond2" = "age_6mo"),
@@ -105,7 +79,7 @@ pl_list <- purrr::map(names(condition_list), function(cond){
   print(cond)
   print(condition_list[[cond]][1])
   
-  pdf(paste0(here("isoform_level_analysis/isoformSwitchAnalyzer/satuRn/BDNF_isoforms_"), cond, ".pdf"), onefile = F)
+  pdf(paste0(here("isoform_level_analysis/isoformSwitchAnalyzer/DEXSeq/plots/BDNF_isoforms_"), cond, ".pdf"), onefile = F)
 
   
   switchPlot(
@@ -154,11 +128,11 @@ pl <- ggplot(iso_fraction_df, aes(x = age_clean, y = IF, fill = isoform_id)) +
   theme(panel.grid.major.x = element_blank())
 pl
 
-pdf(here("isoform_level_analysis/isoformSwitchAnalyzer/satuRn/test.pdf"))
+pdf(here("isoform_level_analysis/isoformSwitchAnalyzer/DEXSeq/plots/BDNF_isoforms_all_ages.pdf"))
 pl
 dev.off()
 
-write.csv(iso_fraction_df, here("isoform_level_analysis/isoformSwitchAnalyzer/satuRn/BDNF_isoform_fractions.csv"))
+write.csv(iso_fraction_df, here("isoform_level_analysis/isoformSwitchAnalyzer/DEXSeq/plots/BDNF_isoform_fractions.csv"))
 ```
 
 
@@ -169,12 +143,13 @@ gene_df <- aSwitchList$isoformFeatures[,c("isoform_id","gene_id")]
 iso_counts <- full_join(iso_counts, gene_df) %>% relocate(isoform_id, gene_id)
 ```
 
+Plot TrkB expression
 ```{r}
 pl_list <- purrr::map(names(condition_list), function(cond){
   print(cond)
   print(condition_list[[cond]][1])
   
-  pdf(paste0(here("isoform_level_analysis/isoformSwitchAnalyzer/satuRn/TrkB_isoforms_"), cond, ".pdf"), onefile = F)
+  pdf(paste0(here("isoform_level_analysis/isoformSwitchAnalyzer/DEXSeq/plots/TrkB_isoforms_"), cond, ".pdf"), onefile = F)
 
   
   switchPlot(
@@ -219,23 +194,13 @@ pl <- ggplot(iso_fraction_df, aes(x = age_clean, y = IF, fill = isoform_id)) +
   theme(panel.grid.major.x = element_blank())
 pl
 
-pdf(here("isoform_level_analysis/isoformSwitchAnalyzer/satuRn/TrkB_isoforms_all_ages.pdf"))
+pdf(here("isoform_level_analysis/isoformSwitchAnalyzer/DEXSeq/plots/TrkB_isoforms_all_ages.pdf"))
 pl
 dev.off()
 
 
-write.csv(iso_fraction_df, here("isoform_level_analysis/isoformSwitchAnalyzer/satuRn/TrkB_isoform_fractions.csv"))
+write.csv(iso_fraction_df, here("isoform_level_analysis/isoformSwitchAnalyzer/DEXSeq/plots/TrkB_isoform_fractions.csv"))
 ```
 
-```{r}
-  
-  switchPlot(
-    DEXSeq_res,
-    gene='Tbc1d10a',
-    IFcutoff = 0,
-    condition1 = "age_17mo",
-    condition2 = "age_P30",
-    rescaleTranscripts = F
-  )
-```
+
 

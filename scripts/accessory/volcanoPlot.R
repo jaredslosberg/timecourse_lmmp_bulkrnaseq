@@ -2,8 +2,7 @@ volcanoPlot <- function(res,
                         clip_nlog10p = 10, # Upper limit for negative log10-transformed p-value
                         clip_log2fc = 2.5, # Upper limit for absolute log2-fold change
                         min_log2FoldChange = 0, # Minimum absolute log2-fold change to consider DE
-                        padj_threshold = 0.05,# Adjusted p-value threshold for differential expression
-                        n_label_genes = NULL
+                        padj_threshold = 0.05 # Adjusted p-value threshold for differential expression
 ) {
   
   # Add a new column for negative log10-transformed p-value
@@ -16,7 +15,7 @@ volcanoPlot <- function(res,
     mutate(
       nlog10p = ifelse(nlog10p > clip_nlog10p, clip_nlog10p, nlog10p),
       fc_threshold = abs(log2FoldChange) > min_log2FoldChange,
-      log2FoldChange =  ifelse(abs(log2FoldChange) > abs(clip_log2fc), sign(log2FoldChange)*clip_log2fc, log2FoldChange),
+      log2FoldChange =  ifelse(log2FoldChange > clip_log2fc, clip_log2fc, log2FoldChange),
       de_status = NULL,
       de_status = case_when(
         padj < padj_threshold & (log2FoldChange >= min_log2FoldChange) ~ "upregulated",
@@ -33,13 +32,6 @@ volcanoPlot <- function(res,
   plotting_data <- plotting_data %>% 
     left_join(., holder, by= "de_status")
   
-  if(!is.null(n_label_genes)){
-    topbottom <- rbind(slice_max(res, n = n_label_genes, order_by = log2FoldChange),
-                         slice_min(res, n = n_label_genes, order_by = log2FoldChange)) %>%
-      pull(external_gene_name)
-    
-    plotting_data <- plotting_data %>% mutate(label_genes = ifelse(external_gene_name %in% topbottom, external_gene_name, NA))
-  }
   # Generate the volcano plot using ggplot2
   # X-axis: log2-fold change
   # Y-axis: negative log10-transformed p-value
